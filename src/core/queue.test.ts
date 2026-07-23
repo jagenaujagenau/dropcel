@@ -5,6 +5,7 @@ import type {
   DeployProgress,
   DeployRequest,
 } from "./deployer";
+import { HeldChanges } from "./held-changes";
 import { DeploymentQueue, type QueueDeps } from "./queue";
 import type { DeploymentState } from "./types";
 
@@ -148,7 +149,7 @@ describe("DeploymentQueue", () => {
     it("reports dirty-set changes for persistence, including the drain", async () => {
       const snapshots: string[][] = [];
       const h = makeHarness(async () => ok(), {
-        onDirtyChange: (ids) => snapshots.push(ids),
+        held: new HeldChanges({ persistOffline: (ids) => snapshots.push(ids) }),
       });
       h.queue.setOffline(true);
       h.queue.notifyChange("p1");

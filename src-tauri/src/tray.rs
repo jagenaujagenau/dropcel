@@ -240,6 +240,59 @@ pub fn update_tray(
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(status: &str) -> TrayProject {
+        TrayProject { name: status.to_string(), status: status.to_string(), framework: String::new() }
+    }
+
+    #[test]
+    fn aggregate_status_precedence() {
+        // deploying wins over everything (the tray should show activity),
+        // then failed, then ready; empty/unknown statuses read as idle.
+        assert_eq!(aggregate_status(&[]), "idle");
+        assert_eq!(aggregate_status(&[project("idle"), project("queued")]), "idle");
+        assert_eq!(aggregate_status(&[project("idle"), project("ready")]), "ready");
+        assert_eq!(aggregate_status(&[project("ready"), project("failed")]), "failed");
+        assert_eq!(
+            aggregate_status(&[project("failed"), project("deploying"), project("ready")]),
+            "deploying"
+        );
+    }
+
+    #[test]
+    fn render_icon_produces_sized_rgba_with_coverage() {
+        for status in ["idle", "ready", "deploying", "failed"] {
+            let (icon, _) = render_icon(status);
+            let rgba = icon.rgba();
+            assert_eq!(rgba.len(), (ICON_SIZE * ICON_SIZE * 4) as usize, "{status} size");
+            let opaque = rgba.chunks(4).filter(|px| px[3] > 0).count();
+            // The triangle covers a meaningful share of the canvas.
+            assert!(opaque > (ICON_SIZE * ICON_SIZE / 8) as usize, "{status} coverage");
+        }
+    }
+
+    #[test]
+    fn render_icon_distinguishes_statuses() {
+        let (idle, idle_template) = render_icon("idle");
+        let (deploying, deploying_template) = render_icon("deploying");
+        let (failed, _) = render_icon("failed");
+        // Idle is a template (macOS recolors it); transient states are not.
+        assert!(idle_template);
+        assert!(!deploying_template);
+        assert_ne!(idle.rgba(), deploying.rgba());
+        assert_ne!(deploying.rgba(), failed.rgba());
+    }
+
+    #[test]
+    fn status_glyphs_are_distinct() {
+        let glyphs = ["ready", "deploying", "failed", "idle"].map(status_glyph);
+        assert_eq!(glyphs, ["✓", "↻", "!", "·"]);
+    }
+}
+
+#[cfg(test)]
 mod icon_dump_tests {
     use super::*;
 

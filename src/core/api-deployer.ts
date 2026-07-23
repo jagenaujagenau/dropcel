@@ -13,8 +13,10 @@ import { missingShas, VercelApiError } from "./vercel-api";
  *   building   — poll deployment state + build events until terminal
  *   ready/failed/canceled — mapped from READY/ERROR/CANCELED
  *
- * Everything effectful is injected, so tests run the whole pipeline against
- * fakes with zero network or IPC.
+ * Filesystem, token and log access are injected via ApiDeployerDeps; the
+ * HTTP surface comes from vercel-api, which api-deployer.test.ts stubs
+ * wholesale — so the whole pipeline runs under test with zero network or
+ * IPC.
  */
 
 export interface ApiDeployerDeps {

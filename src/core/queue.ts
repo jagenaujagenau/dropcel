@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { log } from "../lib/log";
 import type { Deployer, DeployProgress } from "./deployer";
+import { HeldChanges } from "./held-changes";
 import { advance, isTerminal } from "./state-machine";
 import type { DeploymentState, DeployTarget } from "./types";
 import { DEFAULT_PIPELINE_OPTIONS, executeDeployment, type PipelineOptions } from "./pipeline";
@@ -47,8 +48,9 @@ export interface QueueDeps {
    * deploy). Manual deploys never consult this.
    */
   shouldSkipAuto?: (projectId: string) => Promise<boolean>;
-  /** Observe the held-while-offline set (for persistence across restarts). */
-  onDirtyChange?: (projectIds: string[]) => void;
+  /** Shared hold tracker — the queue owns only its 'offline' reason; other
+   * holds (account switch, git operations) belong to the orchestrator. */
+  held?: HeldChanges;
   debounceMs?: number;
   pipeline?: PipelineOptions;
 }
@@ -64,10 +66,12 @@ export class DeploymentQueue {
   private slots = new Map<string, ProjectSlot>();
   private paused = false;
   private offline = false;
-  /** Projects that changed while offline — deployed once on reconnect. */
-  private dirtyWhileOffline = new Set<string>();
+  /** Tracks projects that changed while offline — drained on reconnect. */
+  private held: HeldChanges;
 
-  constructor(private deps: QueueDeps) {}
+  constructor(private deps: QueueDeps) {
+    this.held = deps.held ?? new HeldChanges();
+  }
 
   private slot(projectId: string): ProjectSlot {
     let s = this.slots.get(projectId);
@@ -90,18 +94,16 @@ export class DeploymentQueue {
   setOffline(offline: boolean): void {
     this.offline = offline;
     if (!offline) {
-      const dirty = [...this.dirtyWhileOffline];
-      this.dirtyWhileOffline.clear();
-      if (dirty.length > 0) this.deps.onDirtyChange?.([]);
-      for (const projectId of dirty) this.notifyChange(projectId);
+      // Only projects with no remaining hold reason drain; the rest deploy
+      // when their other holds (account switch, git operation) clear.
+      for (const projectId of this.held.release("offline")) {
+        this.notifyChange(projectId);
+      }
     }
   }
 
   private holdDirty(projectId: string): void {
-    if (!this.dirtyWhileOffline.has(projectId)) {
-      this.dirtyWhileOffline.add(projectId);
-      this.deps.onDirtyChange?.([...this.dirtyWhileOffline]);
-    }
+    this.held.mark(projectId, "offline");
   }
 
   isOffline(): boolean {

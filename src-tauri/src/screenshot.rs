@@ -66,15 +66,28 @@ fn resolve_browser() -> Option<PathBuf> {
     browser_candidates().into_iter().find(|p| p.is_file())
 }
 
-fn snapshot_path(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
-    let dir = app
-        .path()
+fn ensure_https(url: &str) -> AppResult<()> {
+    if !url.starts_with("https://") {
+        return Err(AppError::Validation(format!("refusing to snapshot non-https url: {url}")));
+    }
+    Ok(())
+}
+
+fn data_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    app.path()
         .app_data_dir()
-        .map_err(|e| AppError::Message(e.to_string()))?
-        .join("snapshots");
+        .map_err(|e| AppError::Message(e.to_string()))
+}
+
+fn snapshot_path_in(data_dir: &std::path::Path, project_id: &str) -> AppResult<PathBuf> {
+    let dir = data_dir.join("snapshots");
     std::fs::create_dir_all(&dir)?;
     // project ids are UUIDs we generated — safe as file names.
     Ok(dir.join(format!("{project_id}.png")))
+}
+
+fn snapshot_path(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
+    snapshot_path_in(&data_dir(app)?, project_id)
 }
 
 fn encode(path: &PathBuf) -> AppResult<Snapshot> {
@@ -124,9 +137,7 @@ pub async fn capture_snapshot(
     project_id: String,
     url: String,
 ) -> AppResult<Snapshot> {
-    if !url.starts_with("https://") {
-        return Err(AppError::Message(format!("refusing to snapshot non-https url: {url}")));
-    }
+    ensure_https(&url)?;
     let browser = resolve_browser().ok_or_else(|| {
         AppError::Message(
             "No Chromium-based browser found for snapshots (Chrome, Edge, Brave…).".into(),
@@ -192,4 +203,35 @@ pub fn delete_snapshot(app: AppHandle, project_id: String) -> AppResult<()> {
         std::fs::remove_file(&path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn https_guard_rejects_everything_else() {
+        assert!(ensure_https("https://example.vercel.app").is_ok());
+        for url in ["http://example.com", "file:///etc/passwd", "ftp://x", "example.com"] {
+            assert!(matches!(ensure_https(url), Err(AppError::Validation(_))), "{url}");
+        }
+    }
+
+    #[test]
+    fn snapshot_path_is_id_png_under_snapshots() {
+        let base = std::env::temp_dir()
+            .join("vercel-folder-screenshot-tests")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&base);
+        let path = snapshot_path_in(&base, "abc-123").unwrap();
+        assert_eq!(path, base.join("snapshots/abc-123.png"));
+        // The parent dir is created eagerly so the browser can write into it.
+        assert!(path.parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn browser_candidates_exist_per_os() {
+        // Every OS ships a non-empty candidate list; resolution just filters.
+        assert!(!browser_candidates().is_empty());
+    }
 }

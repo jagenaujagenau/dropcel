@@ -79,7 +79,7 @@ fn packed_ref_sha(git: &Path, reference: &str) -> Option<String> {
 #[tauri::command]
 pub fn git_info(state: State<'_, WatcherState>, project: String) -> AppResult<GitInfo> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
-        return Err(AppError::Message(format!("invalid project name: {project}")));
+        return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
     let root = state.root.lock().unwrap().clone();
     Ok(read_git_dir(&root.join(project).join(".git")))

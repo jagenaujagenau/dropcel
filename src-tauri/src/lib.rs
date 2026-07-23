@@ -9,12 +9,12 @@ mod logger;
 mod network;
 mod projects;
 mod screenshot;
+mod startup;
 mod tray;
 #[cfg(target_os = "macos")]
 mod tray_drop;
 mod watcher;
 
-use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,43 +30,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        .setup(|app| {
-            // Database lives in the platform app-data dir.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("app data dir unavailable");
-            let app_logger = logger::Logger::new(data_dir.join("logs"))?;
-            app_logger.write(
-                "info",
-                "app",
-                &format!("Dropcel starting (v{})", app.package_info().version),
-            );
-            app.manage(app_logger);
-
-            let database = db::open(&data_dir.join("vercel-folder.db"))?;
-
-            // Root folder: persisted setting, falling back to ~/Vercel.
-            let root = database
-                .get_setting("root_folder")?
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(projects::default_root);
-            app.manage(database);
-
-            let watcher_state = watcher::WatcherState::new(root.clone());
-            app.manage(watcher_state);
-            watcher::start(app.handle().clone(), &app.state::<watcher::WatcherState>())?;
-
-            folder_icons::set_dock_icon();
-            let icon_cache = folder_icons::FolderIconCache::default();
-            folder_icons::apply_root_icon(&icon_cache, &root);
-            app.manage(icon_cache);
-
-            tray::init(app.handle())?;
-            #[cfg(target_os = "macos")]
-            tray_drop::attach(app.handle());
-            Ok(())
-        })
+        .setup(|app| startup::init(app))
         // Closing the window keeps the app alive in the tray — deployments
         // continue in the background, Dropbox-style.
         .on_window_event(|window, event| {
@@ -75,7 +39,10 @@ pub fn run() {
                 api.prevent_close();
             }
         })
+        // Command registry — tauri allows exactly one invoke_handler, so every
+        // module's commands are listed here, grouped by module.
         .invoke_handler(tauri::generate_handler![
+            // commands: db pass-throughs + watcher controls
             commands::db_list_projects,
             commands::db_upsert_project,
             commands::db_rename_project,
@@ -91,8 +58,6 @@ pub fn run() {
             commands::db_set_deployment_vercel_ids,
             commands::db_set_project_team,
             commands::db_append_log,
-            logger::log_event,
-            logger::get_log_path,
             commands::db_list_deployments,
             commands::db_latest_deployments,
             commands::db_get_logs,
@@ -105,6 +70,10 @@ pub fn run() {
             commands::set_watch_paused,
             commands::get_watch_paused,
             commands::set_root_folder,
+            // logger
+            logger::log_event,
+            logger::get_log_path,
+            // projects: root folder scanning + imports
             projects::get_root_folder,
             projects::scan_projects,
             projects::read_project_file,
@@ -115,17 +84,22 @@ pub fn run() {
             projects::take_pending_drops,
             projects::create_example_project,
             projects::adopt_loose_files,
+            // screenshot: deployment snapshots
             screenshot::snapshot_support,
             screenshot::capture_snapshot,
             screenshot::get_snapshot,
             screenshot::delete_snapshot,
+            // git
             git::git_info,
+            // network
             network::check_online,
+            // files: deploy manifests + link files
             files::collect_deploy_files,
             files::project_content_digest,
             files::read_file_b64,
             files::write_project_link,
             files::remove_project_link,
+            // credentials: keychain tokens
             credentials::get_vercel_token,
             credentials::set_vercel_token,
             credentials::delete_vercel_token,
@@ -133,6 +107,7 @@ pub fn run() {
             credentials::get_vercel_refresh_token,
             credentials::set_vercel_refresh_token,
             credentials::delete_vercel_refresh_token,
+            // tray
             tray::update_tray,
         ])
         .build(tauri::generate_context!())

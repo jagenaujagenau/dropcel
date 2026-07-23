@@ -1,19 +1,12 @@
 import * as ipc from "../lib/ipc";
+import { activeSessionToken } from "./account-session";
 import * as api from "./vercel-api";
 
 /**
- * The single choke point for obtaining a Vercel access token. Everything
- * that talks to the API calls `getAuthToken()` instead of reading the
- * keychain directly, which is what makes imported CLI sessions self-renew:
- *
- *   1. keychain token, not near expiry → use it (manual PATs have no
- *      recorded expiry and always take this path)
- *   2. near/past expiry + refresh token → OAuth refresh_token grant,
- *      persist rotated tokens, use the new one
- *   3. refresh failed/absent → re-read the CLI's auth.json (the CLI may
- *      have refreshed its own session meanwhile), validate, re-import
- *   4. still nothing usable → whatever the keychain has (letting a 401
- *      surface as an actionable error), or null
+ * Pure auth helpers and session import/sign-in flows. The token lifecycle
+ * itself (single-flight renewal, refresh-margin policy, CLI re-import) lives
+ * in core/account-session.ts; `getAuthToken()` here stays the process-wide
+ * entry point and delegates to the active session.
  */
 
 const EXPIRES_AT_SETTING = "token_expires_at";
@@ -125,7 +118,8 @@ export async function startDeviceSignIn(): Promise<DeviceSignIn> {
   };
 }
 
-async function tryOAuthRefresh(): Promise<string | null> {
+/** OAuth refresh_token grant; persists rotated tokens. Null on any miss. */
+export async function tryOAuthRefresh(): Promise<string | null> {
   const refreshToken = await ipc.credentials.getRefreshToken().catch(() => null);
   if (!refreshToken) return null;
   try {
@@ -137,38 +131,16 @@ async function tryOAuthRefresh(): Promise<string | null> {
   }
 }
 
-async function readExpiry(): Promise<number | null> {
+/** Recorded expiry of the stored token, or null (manual PAT / unknown). */
+export async function readExpiry(): Promise<number | null> {
   const raw = await ipc.db.getSetting(EXPIRES_AT_SETTING).catch(() => null);
   if (!raw) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-// Concurrent callers share one renewal; rotated refresh tokens are
-// single-use, so parallel refreshes would invalidate each other.
-let inflight: Promise<string | null> | null = null;
-
+/** Obtain a Vercel access token — delegates to the active AccountSession,
+ * which owns the single-flight renewal (see core/account-session.ts). */
 export function getAuthToken(): Promise<string | null> {
-  if (inflight) return inflight;
-  inflight = (async () => {
-    try {
-      const [token, expiresAt] = await Promise.all([
-        ipc.credentials.getToken().catch(() => null),
-        readExpiry(),
-      ]);
-      if (token && !needsRefresh(expiresAt, Date.now())) return token;
-
-      const refreshed = await tryOAuthRefresh();
-      if (refreshed) return refreshed;
-
-      // The CLI may have renewed its own session since we imported it.
-      const imported = await importFromCli();
-      if (imported && imported.token !== token) return imported.token;
-
-      return token;
-    } finally {
-      inflight = null;
-    }
-  })();
-  return inflight;
+  return activeSessionToken();
 }

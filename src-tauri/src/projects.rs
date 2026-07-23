@@ -52,17 +52,17 @@ pub fn scan_projects(state: State<'_, WatcherState>) -> AppResult<Vec<ScannedPro
 
 fn safe_project_path(root: &Path, project: &str, rel: &str) -> AppResult<PathBuf> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
-        return Err(AppError::Message(format!("invalid project name: {project}")));
+        return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
     let path = root.join(project).join(rel);
     let canonical_root = root
         .canonicalize()
-        .map_err(|_| AppError::Message("root folder does not exist".into()))?;
+        .map_err(|_| AppError::NotFound("root folder does not exist".into()))?;
     let canonical = path
         .canonicalize()
-        .map_err(|_| AppError::Message(format!("{rel} not found in {project}")))?;
+        .map_err(|_| AppError::NotFound(format!("{rel} not found in {project}")))?;
     if !canonical.starts_with(&canonical_root) {
-        return Err(AppError::Message("path escapes the root folder".into()));
+        return Err(AppError::Validation("path escapes the root folder".into()));
     }
     Ok(canonical)
 }
@@ -97,7 +97,7 @@ pub fn list_project_entries(
 ) -> AppResult<Vec<String>> {
     let root = state.root.lock().unwrap().clone();
     if project.contains(['/', '\\']) || project.starts_with('.') {
-        return Err(AppError::Message(format!("invalid project name: {project}")));
+        return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
     let dir = root.join(&project);
     if !dir.is_dir() {
@@ -165,13 +165,16 @@ fn copy_dir(src: &Path, dst: &Path) -> AppResult<()> {
 /// itself is just a copy. Returns the created project name.
 #[tauri::command]
 pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppResult<String> {
-    let src = PathBuf::from(&path);
     let root = state.root.lock().unwrap().clone();
+    import_dropped_path_in(&root, Path::new(&path))
+}
+
+fn import_dropped_path_in(root: &Path, src: &Path) -> AppResult<String> {
     if !src.exists() {
-        return Err(AppError::Message(format!("{path} does not exist")));
+        return Err(AppError::NotFound(format!("{} does not exist", src.display())));
     }
-    if src.starts_with(&root) {
-        return Err(AppError::Message(
+    if src.starts_with(root) {
+        return Err(AppError::Validation(
             "That's already inside your Vercel folder.".into(),
         ));
     }
@@ -181,8 +184,8 @@ pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppR
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "project".into());
-        let name = unique_project_name(&root, &base);
-        copy_dir(&src, &root.join(&name))?;
+        let name = unique_project_name(root, &base);
+        copy_dir(src, &root.join(&name))?;
         Ok(name)
     } else {
         // Single file: wrap it in a folder. An HTML file becomes index.html
@@ -191,7 +194,7 @@ pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppR
             .file_stem()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "site".into());
-        let name = unique_project_name(&root, &stem);
+        let name = unique_project_name(root, &stem);
         let dir = root.join(&name);
         std::fs::create_dir_all(&dir)?;
         let is_html = src
@@ -203,7 +206,7 @@ pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppR
         } else {
             dir.join(src.file_name().unwrap_or_default())
         };
-        std::fs::copy(&src, &target)?;
+        std::fs::copy(src, &target)?;
         Ok(name)
     }
 }
@@ -216,11 +219,15 @@ pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppR
 #[tauri::command]
 pub fn adopt_loose_files(state: State<'_, WatcherState>) -> AppResult<Vec<String>> {
     let root = state.root.lock().unwrap().clone();
+    adopt_loose_files_in(&root)
+}
+
+fn adopt_loose_files_in(root: &Path) -> AppResult<Vec<String>> {
     let mut adopted = vec![];
     if !root.is_dir() {
         return Ok(adopted);
     }
-    for entry in std::fs::read_dir(&root)? {
+    for entry in std::fs::read_dir(root)? {
         let Ok(entry) = entry else { continue };
         let Ok(file_type) = entry.file_type() else { continue };
         if !file_type.is_file() {
@@ -239,7 +246,7 @@ pub fn adopt_loose_files(state: State<'_, WatcherState>) -> AppResult<Vec<String
             .file_stem()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "site".into());
-        let project = unique_project_name(&root, &stem);
+        let project = unique_project_name(root, &stem);
         let dir = root.join(&project);
         if std::fs::create_dir_all(&dir).is_err() {
             continue;
@@ -302,12 +309,12 @@ pub fn create_example_project(state: State<'_, WatcherState>) -> AppResult<Strin
 #[tauri::command]
 pub fn trash_project(state: State<'_, WatcherState>, project: String) -> AppResult<()> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
-        return Err(AppError::Message(format!("invalid project name: {project}")));
+        return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
     let root = state.root.lock().unwrap().clone();
     let dir = root.join(&project);
     if !dir.is_dir() {
-        return Err(AppError::Message(format!("{project} is not in the folder anymore")));
+        return Err(AppError::NotFound(format!("{project} is not in the folder anymore")));
     }
     trash::delete(&dir).map_err(|e| AppError::Message(format!("could not move {project} to trash: {e}")))
 }
@@ -344,24 +351,38 @@ mod tests {
         std::fs::write(root.join("notes.txt"), "keep me").unwrap();
         std::fs::write(root.join(".hidden.html"), "no").unwrap();
 
-        // Exercise the inner logic via the fs directly (command needs State).
-        // Simulate: same steps as adopt_loose_files.
-        for entry in std::fs::read_dir(&root).unwrap() {
-            let entry = entry.unwrap();
-            if !entry.file_type().unwrap().is_file() { continue; }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || !name.to_lowercase().ends_with(".html") { continue; }
-            let stem = entry.path().file_stem().unwrap().to_string_lossy().to_string();
-            let project = unique_project_name(&root, &stem);
-            let dir = root.join(&project);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::rename(entry.path(), dir.join("index.html")).unwrap();
-        }
+        let adopted = adopt_loose_files_in(&root).unwrap();
 
+        assert_eq!(adopted, vec!["landing".to_string()]);
         assert!(root.join("landing/index.html").is_file());
         assert!(!root.join("landing.html").exists());
         assert!(root.join("notes.txt").is_file());
         assert!(root.join(".hidden.html").exists());
+    }
+
+    #[test]
+    fn import_copies_dir_and_wraps_html_file() {
+        let root = scratch("import-root");
+        let elsewhere = scratch("import-src");
+        std::fs::create_dir_all(elsewhere.join("blog")).unwrap();
+        std::fs::write(elsewhere.join("blog/index.html"), "<h1/>").unwrap();
+        std::fs::write(elsewhere.join("Page.HTM"), "<p/>").unwrap();
+
+        assert_eq!(import_dropped_path_in(&root, &elsewhere.join("blog")).unwrap(), "blog");
+        assert!(root.join("blog/index.html").is_file());
+        // Single HTML file becomes <stem>/index.html.
+        assert_eq!(import_dropped_path_in(&root, &elsewhere.join("Page.HTM")).unwrap(), "Page");
+        assert!(root.join("Page/index.html").is_file());
+
+        // Guards: missing source and sources already under the root.
+        assert!(matches!(
+            import_dropped_path_in(&root, &elsewhere.join("nope")),
+            Err(AppError::NotFound(_))
+        ));
+        assert!(matches!(
+            import_dropped_path_in(&root, &root.join("blog")),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

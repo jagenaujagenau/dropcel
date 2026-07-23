@@ -8,187 +8,83 @@ use crate::db::{Db, Deployment, LogLine, Project, ProjectDomain};
 use crate::error::AppResult;
 use crate::watcher::{self, WatcherState};
 
+/// One forwarder per Db method: `#[tauri::command]` can't sit on an impl, so
+/// each line expands to `fn <name>(db, args…) -> AppResult<ret> { db.<method>(fwd…) }`.
+/// Argument names are part of the IPC contract — Tauri maps the camelCase
+/// keys in src/lib/ipc.ts onto these snake_case names.
+macro_rules! db_command {
+    ($name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $method:ident($($fwd:expr),* $(,)?)) => {
+        #[tauri::command]
+        pub fn $name(db: State<'_, Db>, $($arg: $ty),*) -> AppResult<$ret> {
+            db.$method($($fwd),*)
+        }
+    };
+}
+
 // ---- projects -------------------------------------------------------------
 
-#[tauri::command]
-pub fn db_list_projects(db: State<'_, Db>) -> AppResult<Vec<Project>> {
-    db.list_projects()
-}
-
-#[tauri::command]
-pub fn db_upsert_project(
-    db: State<'_, Db>,
-    name: String,
-    path: String,
-    framework: String,
-) -> AppResult<Project> {
-    db.upsert_project(&name, &path, &framework)
-}
-
-#[tauri::command]
-pub fn db_rename_project(
-    db: State<'_, Db>,
-    id: String,
-    new_name: String,
-    new_path: String,
-) -> AppResult<()> {
-    db.rename_project(&id, &new_name, &new_path)
-}
-
-#[tauri::command]
-pub fn db_set_project_link(
-    db: State<'_, Db>,
-    id: String,
-    vercel_project_id: Option<String>,
-) -> AppResult<()> {
-    db.set_project_link(&id, vercel_project_id.as_deref())
-}
-
-#[tauri::command]
-pub fn db_set_auto_deploy(db: State<'_, Db>, id: String, enabled: bool) -> AppResult<()> {
-    db.set_auto_deploy(&id, enabled)
-}
-
-#[tauri::command]
-pub fn db_set_project_framework(db: State<'_, Db>, id: String, framework: String) -> AppResult<()> {
-    db.set_project_framework(&id, &framework)
-}
-
-#[tauri::command]
-pub fn db_delete_project(db: State<'_, Db>, id: String) -> AppResult<()> {
-    db.delete_project(&id)
-}
+db_command!(db_list_projects() -> Vec<Project> => list_projects());
+db_command!(db_upsert_project(name: String, path: String, framework: String) -> Project
+    => upsert_project(&name, &path, &framework));
+db_command!(db_rename_project(id: String, new_name: String, new_path: String) -> ()
+    => rename_project(&id, &new_name, &new_path));
+db_command!(db_set_project_link(id: String, vercel_project_id: Option<String>) -> ()
+    => set_project_link(&id, vercel_project_id.as_deref()));
+db_command!(db_set_auto_deploy(id: String, enabled: bool) -> () => set_auto_deploy(&id, enabled));
+db_command!(db_set_project_framework(id: String, framework: String) -> ()
+    => set_project_framework(&id, &framework));
+db_command!(db_delete_project(id: String) -> () => delete_project(&id));
 
 // ---- deployments ----------------------------------------------------------
 
-#[tauri::command]
-pub fn db_insert_deployment(
-    db: State<'_, Db>,
+db_command!(db_insert_deployment(
     project_id: String,
     target: String,
     branch: Option<String>,
     commit_sha: Option<String>,
-) -> AppResult<Deployment> {
-    db.insert_deployment(&project_id, &target, branch.as_deref(), commit_sha.as_deref())
-}
-
-#[tauri::command]
-pub fn db_set_remote_repo(db: State<'_, Db>, id: String, repo: String) -> AppResult<()> {
-    db.set_remote_repo(&id, &repo)
-}
-
-#[tauri::command]
-pub fn db_set_locked_branch(
-    db: State<'_, Db>,
-    id: String,
-    branch: Option<String>,
-) -> AppResult<()> {
-    db.set_locked_branch(&id, branch.as_deref())
-}
-
-#[tauri::command]
-pub fn db_update_deployment(
-    db: State<'_, Db>,
+) -> Deployment
+    => insert_deployment(&project_id, &target, branch.as_deref(), commit_sha.as_deref()));
+db_command!(db_set_remote_repo(id: String, repo: String) -> () => set_remote_repo(&id, &repo));
+db_command!(db_set_locked_branch(id: String, branch: Option<String>) -> ()
+    => set_locked_branch(&id, branch.as_deref()));
+db_command!(db_update_deployment(
     id: String,
     state: String,
     url: Option<String>,
     error: Option<String>,
     exit_code: Option<i64>,
-) -> AppResult<Deployment> {
-    db.update_deployment(&id, &state, url.as_deref(), error.as_deref(), exit_code)
-}
-
-#[tauri::command]
-pub fn db_set_deployment_vercel_ids(
-    db: State<'_, Db>,
+) -> Deployment
+    => update_deployment(&id, &state, url.as_deref(), error.as_deref(), exit_code));
+db_command!(db_set_deployment_vercel_ids(
     id: String,
     vercel_deployment_id: String,
     inspector_url: Option<String>,
-) -> AppResult<()> {
-    db.set_deployment_vercel_ids(&id, &vercel_deployment_id, inspector_url.as_deref())
-}
-
-#[tauri::command]
-pub fn db_set_project_team(db: State<'_, Db>, id: String, team_id: Option<String>) -> AppResult<()> {
-    db.set_project_team(&id, team_id.as_deref())
-}
-
-#[tauri::command]
-pub fn db_append_log(
-    db: State<'_, Db>,
-    deployment_id: String,
-    stream: String,
-    line: String,
-) -> AppResult<()> {
-    db.append_log(&deployment_id, &stream, &line)
-}
-
-#[tauri::command]
-pub fn db_set_deployment_public_url(
-    db: State<'_, Db>,
-    id: String,
-    public_url: String,
-) -> AppResult<()> {
-    db.set_deployment_public_url(&id, &public_url)
-}
-
-#[tauri::command]
-pub fn db_list_deployments(
-    db: State<'_, Db>,
-    project_id: String,
-    limit: Option<i64>,
-) -> AppResult<Vec<Deployment>> {
-    db.list_deployments(&project_id, limit.unwrap_or(50))
-}
-
-#[tauri::command]
-pub fn db_latest_deployments(db: State<'_, Db>) -> AppResult<Vec<Deployment>> {
-    db.latest_deployments()
-}
-
-#[tauri::command]
-pub fn db_get_logs(db: State<'_, Db>, deployment_id: String) -> AppResult<Vec<LogLine>> {
-    db.get_logs(&deployment_id)
-}
+) -> ()
+    => set_deployment_vercel_ids(&id, &vercel_deployment_id, inspector_url.as_deref()));
+db_command!(db_set_project_team(id: String, team_id: Option<String>) -> ()
+    => set_project_team(&id, team_id.as_deref()));
+db_command!(db_append_log(deployment_id: String, stream: String, line: String) -> ()
+    => append_log(&deployment_id, &stream, &line));
+db_command!(db_set_deployment_public_url(id: String, public_url: String) -> ()
+    => set_deployment_public_url(&id, &public_url));
+db_command!(db_list_deployments(project_id: String, limit: Option<i64>) -> Vec<Deployment>
+    => list_deployments(&project_id, limit.unwrap_or(50)));
+db_command!(db_latest_deployments() -> Vec<Deployment> => latest_deployments());
+db_command!(db_get_logs(deployment_id: String) -> Vec<LogLine> => get_logs(&deployment_id));
 
 // ---- domains --------------------------------------------------------------
 
-#[tauri::command]
-pub fn db_add_domain(
-    db: State<'_, Db>,
-    project_id: String,
-    domain: String,
-    verified: bool,
-) -> AppResult<()> {
-    db.add_domain(&project_id, &domain, verified)
-}
-
-#[tauri::command]
-pub fn db_set_domain_verified(db: State<'_, Db>, domain: String, verified: bool) -> AppResult<()> {
-    db.set_domain_verified(&domain, verified)
-}
-
-#[tauri::command]
-pub fn db_remove_domain(db: State<'_, Db>, domain: String) -> AppResult<()> {
-    db.remove_domain(&domain)
-}
-
-#[tauri::command]
-pub fn db_list_domains(db: State<'_, Db>, project_id: String) -> AppResult<Vec<ProjectDomain>> {
-    db.list_domains(&project_id)
-}
+db_command!(db_add_domain(project_id: String, domain: String, verified: bool) -> ()
+    => add_domain(&project_id, &domain, verified));
+db_command!(db_set_domain_verified(domain: String, verified: bool) -> ()
+    => set_domain_verified(&domain, verified));
+db_command!(db_remove_domain(domain: String) -> () => remove_domain(&domain));
+db_command!(db_list_domains(project_id: String) -> Vec<ProjectDomain> => list_domains(&project_id));
 
 // ---- settings -------------------------------------------------------------
 
-#[tauri::command]
-pub fn db_get_setting(db: State<'_, Db>, key: String) -> AppResult<Option<String>> {
-    db.get_setting(&key)
-}
-
-#[tauri::command]
-pub fn db_set_setting(db: State<'_, Db>, key: String, value: String) -> AppResult<()> {
-    db.set_setting(&key, &value)
-}
+db_command!(db_get_setting(key: String) -> Option<String> => get_setting(&key));
+db_command!(db_set_setting(key: String, value: String) -> () => set_setting(&key, &value));
 
 // ---- watcher --------------------------------------------------------------
 

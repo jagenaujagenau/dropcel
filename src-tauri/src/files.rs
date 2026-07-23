@@ -27,7 +27,7 @@ pub struct DeployFile {
 
 fn validate_project_name(project: &str) -> AppResult<()> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
-        return Err(AppError::Message(format!("invalid project name: {project}")));
+        return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
     Ok(())
 }
@@ -112,7 +112,7 @@ fn collect(state: &State<'_, WatcherState>, project: &str) -> AppResult<Vec<Depl
     let root = state.root.lock().unwrap().clone();
     let dir = root.join(project);
     if !dir.is_dir() {
-        return Err(AppError::Message(format!("{project} is not in the folder")));
+        return Err(AppError::NotFound(format!("{project} is not in the folder")));
     }
     let mut out = vec![];
     walk(&dir, &dir, &mut out)?;
@@ -148,7 +148,7 @@ pub fn read_file_b64(
 ) -> AppResult<String> {
     validate_project_name(&project)?;
     if path.split('/').any(|seg| seg == "..") {
-        return Err(AppError::Message("path escapes the project".into()));
+        return Err(AppError::Validation("path escapes the project".into()));
     }
     let root = state.root.lock().unwrap().clone();
     let full: PathBuf = root.join(&project).join(&path);

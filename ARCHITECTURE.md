@@ -9,18 +9,22 @@ commands and events, isolated in a single file on each side.
 ┌───────────────────────────── TypeScript ─────────────────────────────┐
 │  UI (React + Tailwind + shadcn-style components)                     │
 │  store/app.ts          zustand projection of app state               │
-│  core/orchestrator.ts  wires events → core → store/tray/notifications│
+│  core/orchestrator.ts  composition root: constructs + delegates      │
+│  core/reconciler.ts    folder = truth: fs changes → project changes  │
 │  core/queue.ts         debounce, per-project serialization, coalesce │
+│  core/held-changes.ts  one ledger of holds (offline/switch/git)      │
 │  core/pipeline.ts      Effect: retry policy, interruption            │
 │  core/deployer.ts      Deployer interface (api-deployer implements)  │
 │  core/vercel-api.ts    Effect HttpClient → Vercel REST API           │
-│  core/auth.ts          token choke point (keychain/CLI/refresh)      │
+│  core/account-session.ts token + identity lifecycle (single-flight)  │
+│  core/effects.ts       seams: Notifier, Clipboard, Tray, Connectivity│
 │  core/state-machine.ts pure transition table                         │
 │  core/detection.ts     pure framework detection                      │
 │  core/errors.ts        build output → actionable explanation         │
 │  lib/ipc.ts            the ONLY file that talks to Tauri             │
 ├───────────────────────────────  IPC  ────────────────────────────────┤
-│  commands.rs           dumb, typed DB/watcher commands               │
+│  startup.rs            ordered boot wiring (logger→db→watcher→icons) │
+│  commands.rs           dumb, typed DB/watcher commands (macro-gen)   │
 │  watcher.rs            notify + debouncer, ignore rules, dedup       │
 │  files.rs              deploy manifest (SHA-1), content digests      │
 │  db.rs                 SQLite (projects, deployments, logs, settings)│
@@ -90,17 +94,21 @@ detected → queued → preparing → uploading → building → ready
 Connectivity is monitored two ways: `navigator.onLine` events give an
 instant offline signal, and a Rust-side TCP probe to `api.vercel.com:443`
 is the source of truth (`onLine` reports true on internet-less LANs). The
-probe re-runs every 60s online / 10s offline. While offline, the queue
-holds auto-deploys as a per-project dirty set instead of producing doomed
-API calls; reconnecting deploys each dirty project exactly once (Dropbox's
-"sync when back online"). Manual deploy buttons still work offline by
-design — they fail fast with the actionable network message. The top bar
-shows an "Offline — changes held" pill.
+probe re-runs every 60s online / 10s offline (the monitor policy lives
+behind the Connectivity seam in `core/effects.ts` and is tested with fake
+timers). While offline, changes are held instead of producing doomed API
+calls. Manual deploy buttons still work offline by design — they fail fast
+with the actionable network message. The top bar shows an "Offline —
+changes held" pill.
 
-The dirty set survives restarts: every mutation is persisted to the
-`dirty_projects` setting, and startup drains it after the first
-connectivity probe — deploying each held project once, or re-holding (and
-re-persisting) if still offline.
+**All holds share one ledger** (`core/held-changes.ts`): a project maps to
+its set of hold reasons — `offline`, `account-switch`, `git-operation`.
+Releasing a project's *last* reason drains it exactly once; overlapping
+holds (offline during an unresolved account switch, say) can no longer
+double-deploy. The offline component survives restarts: mutations persist
+to the `dirty_projects` setting, and startup drains it after the first
+connectivity probe — deploying each held project once, or re-holding if
+still offline.
 
 ## Data
 
@@ -320,8 +328,10 @@ validates that token against `/v2/user`, and imports it into the keychain —
 zero-paste onboarding for anyone who ever ran `vercel login`. The CLI is
 never executed; its file is only read.
 
-**Imported sessions self-renew** (`core/auth.ts`, the single choke point
-every API caller uses via `getAuthToken()`): the session's `refreshToken`
+**Imported sessions self-renew** (`core/account-session.ts` owns the whole
+token + identity lifecycle; `core/auth.ts` keeps the `getAuthToken()`
+entry point every API caller uses, delegating to the active session): the
+session's `refreshToken`
 is stored as a second keychain entry and its expiry as a setting. Within 15
 minutes of expiry the app runs a standard OAuth `refresh_token` grant
 against the endpoint discovered from vercel.com's OpenID configuration,
@@ -371,9 +381,22 @@ status projection they would also use.
 
 ## Testing
 
+The rule: **the interface is the test surface.** Policy modules take
+injected deps (the `DeploymentQueue` pattern) so they test under fakes;
+side effects hide behind seams (`core/effects.ts`, the `Deployer`) whose
+test adapters make each seam real.
+
 - **Rust** (`cargo test`): SQLite migrations + CRUD, rename-preserves-link,
-  ignore rules, event classification/dedup.
+  ignore rules, event classification/dedup, project import/adoption cores
+  (`*_in(root)` functions the commands delegate to), tray status
+  aggregation + icon rendering, screenshot guards. The folder-icon asset
+  generator is build-time tooling in `folder_icons/generator.rs`
+  (`cargo test generate_folder_icons -- --ignored`).
 - **TypeScript** (`pnpm test`): detection matrix, state-machine legality +
-  monotonic advance, error explanations, CLI line parsing, and queue
-  integration tests (debounce under fake timers, coalescing, retries,
-  cancellation, per-project independence) against a scriptable mock deployer.
+  monotonic advance, error explanations, queue integration (debounce under
+  fake timers, coalescing, retries, cancellation) against a scriptable mock
+  deployer — plus the reconciler (rename vs delete+add, adoption,
+  copy-in-progress), account session (single-flight refresh, CLI fallback,
+  switch detection/resolution), held-changes (overlapping holds,
+  exactly-once drain, persistence), the REST deploy protocol
+  (missing_files loop, abort → remote cancel), and connectivity policy.

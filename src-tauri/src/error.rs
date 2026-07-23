@@ -11,6 +11,12 @@ pub enum AppError {
     Watch(String),
     #[error("keychain error: {0}")]
     Keychain(String),
+    /// Caller sent something we refuse to act on (bad name, escaping path).
+    #[error("{0}")]
+    Validation(String),
+    /// The referenced project/file no longer exists.
+    #[error("{0}")]
+    NotFound(String),
     #[error("{0}")]
     Message(String),
 }
@@ -28,6 +34,8 @@ impl Serialize for AppError {
             AppError::Io(_) => "io",
             AppError::Watch(_) => "watch",
             AppError::Keychain(_) => "keychain",
+            AppError::Validation(_) => "validation",
+            AppError::NotFound(_) => "not-found",
             AppError::Message(_) => "message",
         };
         ErrorPayload {

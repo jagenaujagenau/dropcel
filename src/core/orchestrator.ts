@@ -1,28 +1,32 @@
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
 import * as ipc from "../lib/ipc";
 import { describeError, log } from "../lib/log";
 import { useAppStore } from "../store/app";
+import { AccountSession, createRealAccountSession } from "./account-session";
 import { createApiDeployer } from "./api-deployer";
-import { getAuthToken, importFromCli } from "./auth";
 import { checkGitConnection } from "./deployment-actions";
-import { detectFramework, isDeployable } from "./detection";
+import {
+  ConnectivityMonitor,
+  createTauriConnectivity,
+  tauriClipboard,
+  TauriNotifier,
+  tauriTray,
+  type ClipboardPort,
+  type TrayPort,
+} from "./effects";
 import { shouldHoldAutoDeploy } from "./git";
+import { HeldChanges } from "./held-changes";
 import { choosePublicUrl } from "./public-url";
 import { DeploymentQueue, type TransitionInfo } from "./queue";
-import { isLegitRename, parseLinkFile } from "./rename";
-import type { Deployment, DeploymentState, DeployTarget, Project } from "./types";
+import { Reconciler } from "./reconciler";
+import type { Deployment, DeploymentState, DeployTarget } from "./types";
 import * as api from "./vercel-api";
 
 /**
- * The orchestrator is the application's spine: it connects native events
- * (filesystem changes) and the REST-API deployer to the pure core
- * (detection, state machine, queue) and projects results into the store,
- * SQLite, tray and notifications. Created once at startup.
+ * The orchestrator is the application's spine — and its composition root:
+ * it constructs the deep modules (queue, reconciler, account session, held
+ * changes, effect adapters), wires native events to them, and projects
+ * results into the store, SQLite, tray and notifications. Created once at
+ * startup; the modules own the logic, the orchestrator owns the wiring.
  */
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -30,20 +34,6 @@ function base64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-async function detectProjectFramework(name: string) {
-  const entries = await ipc.fs.listProjectEntries(name);
-  let packageJson = null;
-  const raw = await ipc.fs.readProjectFile(name, "package.json");
-  if (raw) {
-    try {
-      packageJson = JSON.parse(raw);
-    } catch {
-      packageJson = null;
-    }
-  }
-  return { entries, packageJson, input: { entries, packageJson } };
 }
 
 function trayStatus(state: string | undefined): ipc.TrayProject["status"] {
@@ -64,12 +54,52 @@ function trayStatus(state: string | undefined): ipc.TrayProject["status"] {
 
 export class Orchestrator {
   readonly queue: DeploymentQueue;
-  private notifyPermission = false;
+  private readonly notifier: TauriNotifier;
+  private readonly clipboard: ClipboardPort;
+  private readonly tray: TrayPort;
+  private readonly connectivity: ConnectivityMonitor;
+  private readonly held: HeldChanges;
+  private readonly session: AccountSession;
+  private readonly reconciler: Reconciler;
 
   constructor() {
+    this.notifier = new TauriNotifier();
+    this.clipboard = tauriClipboard;
+    this.tray = tauriTray;
+    this.connectivity = createTauriConnectivity();
+
+    // Held-while-offline changes survive an app restart.
+    this.held = new HeldChanges({
+      persistOffline: (projectIds) => {
+        void ipc.db
+          .setSetting("dirty_projects", JSON.stringify(projectIds))
+          .catch(() => {});
+      },
+    });
+
+    this.session = createRealAccountSession({
+      setAuthedAs: (username, avatarUrl) =>
+        useAppStore.getState().setAuthedAs(username, avatarUrl),
+      notify: (title, body) => this.notify(title, body),
+      onSwitchDetected: (sw) => useAppStore.getState().setAccountSwitch(sw),
+      getAccountSwitch: () => useAppStore.getState().accountSwitch,
+      clearAccountSwitch: () => useAppStore.getState().setAccountSwitch(null),
+      getProjects: () =>
+        useAppStore.getState().projects.map((p) => ({ id: p.id, name: p.name })),
+      onFreshStart: () => this.integrationChecked.clear(),
+      reloadProjects: async () =>
+        useAppStore.getState().setProjects(await ipc.db.listProjects()),
+      // Deploy the changes that piled up while the banner was open.
+      onSwitchResolved: () => {
+        for (const id of this.held.release("account-switch")) {
+          void this.notifyChangeGitGated(id);
+        }
+      },
+    });
+
     this.queue = new DeploymentQueue({
       deployer: createApiDeployer({
-        getToken: getAuthToken,
+        getToken: () => this.session.getToken(),
         getProjectMeta: async (projectName) => {
           const p = useAppStore.getState().projects.find((x) => x.name === projectName);
           return p
@@ -132,12 +162,30 @@ export class Orchestrator {
         }
         return identical;
       },
-      // Held-while-offline changes survive an app restart.
-      onDirtyChange: (projectIds) => {
-        void ipc.db
-          .setSetting("dirty_projects", JSON.stringify(projectIds))
-          .catch(() => {});
+      held: this.held,
+    });
+
+    this.reconciler = new Reconciler({
+      adoptLooseFiles: ipc.fs.adoptLooseFiles,
+      scanProjects: ipc.fs.scanProjects,
+      listProjects: ipc.db.listProjects,
+      readProjectFile: ipc.fs.readProjectFile,
+      listProjectEntries: ipc.fs.listProjectEntries,
+      upsertProject: ipc.db.upsertProject,
+      renameProject: ipc.db.renameProject,
+      setProjectLink: ipc.db.setProjectLink,
+      setProjectFramework: ipc.db.setProjectFramework,
+      setProjects: (projects) => useAppStore.getState().setProjects(projects),
+      setPresentOnDisk: (names) => useAppStore.getState().setPresentOnDisk(names),
+      getProjects: () => useAppStore.getState().projects,
+      isWatchPaused: () => useAppStore.getState().watchPaused,
+      onProjectNeedsDeploy: (projectId) => void this.notifyChangeGitGated(projectId),
+      onProjectPresent: (projectId) => {
+        void this.refreshGit(projectId);
+        void this.checkRemoteIntegration(projectId);
       },
+      onProjectGone: (projectId) => this.queue.remove(projectId),
+      onReconciled: () => this.refreshTray(),
     });
   }
 
@@ -326,7 +374,7 @@ export class Orchestrator {
       const project = useAppStore.getState().projects.find((p) => p.id === projectId);
       const [domains, token] = await Promise.all([
         ipc.db.listDomains(projectId),
-        getAuthToken(),
+        this.session.getToken(),
       ]);
       let aliases: string[] = [];
       const dplId =
@@ -353,7 +401,7 @@ export class Orchestrator {
     try {
       const setting = await ipc.db.getSetting("copy_url_on_ready");
       if (setting === "0") return false;
-      await writeText(url);
+      await this.clipboard.write(url);
       return true;
     } catch (err) {
       console.error("clipboard copy failed", err);
@@ -362,114 +410,25 @@ export class Orchestrator {
   }
 
   private notify(title: string, body: string) {
-    if (!this.notifyPermission) return;
-    try {
-      sendNotification({ title, body });
-    } catch (err) {
-      console.error("notification failed", err);
-    }
+    this.notifier.notify(title, body);
   }
 
   private async refreshTray() {
     const { projects, latestByProject, presentOnDisk } = useAppStore.getState();
-    await ipc.tray
-      .update(
-        projects
-          .filter((p) => presentOnDisk.has(p.name))
-          .map((p) => ({
-            name: p.name,
-            status: trayStatus(latestByProject[p.id]?.state),
-            framework: p.framework,
-          })),
-      )
-      .catch(() => {});
+    await this.tray.update(
+      projects
+        .filter((p) => presentOnDisk.has(p.name))
+        .map((p) => ({
+          name: p.name,
+          status: trayStatus(latestByProject[p.id]?.state),
+          framework: p.framework,
+        })),
+    );
   }
 
-  /**
-   * Reconcile the database with what's actually inside the folder:
-   *  - new directories become projects (and deploy),
-   *  - a disappeared dir + an unknown dir of equal count is treated as a
-   *    rename, preserving the Vercel link,
-   *  - deleted dirs simply stop being watched; local history stays.
-   */
-  async reconcile(deployNew = false): Promise<void> {
-    const store = useAppStore.getState();
-    // Loose .html files copied straight into the root become projects first,
-    // so this same pass registers and deploys them.
-    const adopted = await ipc.fs.adoptLooseFiles().catch(() => [] as string[]);
-    if (adopted.length > 0) {
-      log.info("import", `adopted loose files as projects: ${adopted.join(", ")}`);
-    }
-    const [scanned, projects] = await Promise.all([
-      ipc.fs.scanProjects(),
-      ipc.db.listProjects(),
-    ]);
-    const known = new Map(projects.map((p) => [p.name, p]));
-    const scannedNames = new Set(scanned.map((s) => s.name));
-
-    const missing = projects.filter((p) => !scannedNames.has(p.name));
-    const unknown = scanned.filter((s) => !known.has(s.name));
-
-    // Rename heuristic: exactly one dir vanished and one appeared — but only
-    // when the Vercel link file travelled with the folder (or neither side
-    // has one). Otherwise it's a delete + an unrelated new project.
-    let handledAsRename = false;
-    if (missing.length === 1 && unknown.length === 1) {
-      const [gone] = missing;
-      const [appeared] = unknown;
-      const appearedLinkId = parseLinkFile(
-        await ipc.fs.readProjectFile(appeared.name, ".vercel/project.json").catch(() => null),
-      );
-      if (isLegitRename(gone.vercelProjectId, appearedLinkId)) {
-        await ipc.db.renameProject(gone.id, appeared.name, appeared.path);
-        handledAsRename = true;
-      }
-    }
-    const toDeploy: string[] = [];
-    if (!handledAsRename) {
-      for (const s of unknown) {
-        const { input } = await detectProjectFramework(s.name);
-        if (!isDeployable(input)) continue;
-        const project = await ipc.db.upsertProject(
-          s.name,
-          s.path,
-          detectFramework(input),
-        );
-        if (deployNew) toDeploy.push(project.id);
-      }
-    }
-
-    // Capture the CLI link (projectId) for present projects that lack one —
-    // it's the identity signal the rename guard relies on.
-    const linked = await ipc.db.listProjects();
-    for (const p of linked) {
-      if (p.vercelProjectId || !scannedNames.has(p.name)) continue;
-      const linkId = parseLinkFile(
-        await ipc.fs.readProjectFile(p.name, ".vercel/project.json").catch(() => null),
-      );
-      if (linkId) await ipc.db.setProjectLink(p.id, linkId).catch(() => {});
-    }
-
-    const fresh = await ipc.db.listProjects();
-    store.setProjects(fresh);
-    store.setPresentOnDisk(scanned.map((s) => s.name));
-    for (const p of fresh) {
-      if (scannedNames.has(p.name)) {
-        void this.refreshGit(p.id);
-        void this.checkRemoteIntegration(p.id);
-      }
-    }
-    // Projects no longer on disk: stop watching + cancel in-flight work.
-    for (const p of fresh) {
-      if (!scannedNames.has(p.name)) this.queue.remove(p.id);
-    }
-    await this.refreshTray();
-
-    // Deploy AFTER the store knows the new projects — the queue resolves
-    // projects through the store, so enqueueing earlier is a silent no-op
-    // (the first-drop-never-deployed bug). Route through the gated auto
-    // path: git holds, offline holds and the content-digest guard apply.
-    for (const id of toDeploy) void this.notifyChangeGitGated(id);
+  /** Reconcile the database with what's actually inside the folder. */
+  reconcile(deployNew = false): Promise<void> {
+    return this.reconciler.reconcile(deployNew);
   }
 
   deployProject(projectId: string, target: DeployTarget) {
@@ -494,16 +453,13 @@ export class Orchestrator {
    * to the locked branch rewrites tracked files, which re-enters this path
    * naturally. Manual deploys bypass the gate entirely.
    */
-  /** Changes held while an account switch awaits resolution. */
-  private heldByAccountSwitch = new Set<string>();
-
   private async notifyChangeGitGated(projectId: string) {
     const project = useAppStore.getState().projects.find((p) => p.id === projectId);
     if (!project) return;
     // Unresolved account switch: linked projects would deploy against the
     // previous account and fail — hold everything until the user chooses.
     if (useAppStore.getState().accountSwitch) {
-      this.heldByAccountSwitch.add(projectId);
+      this.held.mark(projectId, "account-switch");
       return;
     }
     const git = await this.refreshGit(projectId);
@@ -513,24 +469,33 @@ export class Orchestrator {
       this.queue.notifyChange(projectId);
       return;
     }
-    if (git?.operation && !this.gitHoldTimers.has(projectId)) {
-      const timer = setInterval(() => {
-        void (async () => {
-          const fresh = await this.refreshGit(projectId);
-          const p = useAppStore.getState().projects.find((x) => x.id === projectId);
-          if (!p || !fresh?.operation) {
-            this.clearGitHold(projectId);
-            if (p && !shouldHoldAutoDeploy(fresh, p.lockedBranch).hold) {
-              this.queue.notifyChange(projectId);
+    if (git?.operation) {
+      this.held.mark(projectId, "git-operation");
+      if (!this.gitHoldTimers.has(projectId)) {
+        const timer = setInterval(() => {
+          void (async () => {
+            const fresh = await this.refreshGit(projectId);
+            const p = useAppStore.getState().projects.find((x) => x.id === projectId);
+            if (!p || !fresh?.operation) {
+              this.stopGitHoldTimer(projectId);
+              const freed = this.held.releaseOne(projectId, "git-operation");
+              if (p && freed && !shouldHoldAutoDeploy(fresh, p.lockedBranch).hold) {
+                this.queue.notifyChange(projectId);
+              }
             }
-          }
-        })();
-      }, 15_000);
-      this.gitHoldTimers.set(projectId, timer);
+          })();
+        }, 15_000);
+        this.gitHoldTimers.set(projectId, timer);
+      }
     }
   }
 
   private clearGitHold(projectId: string) {
+    this.stopGitHoldTimer(projectId);
+    this.held.releaseOne(projectId, "git-operation");
+  }
+
+  private stopGitHoldTimer(projectId: string) {
     const timer = this.gitHoldTimers.get(projectId);
     if (timer) {
       clearInterval(timer);
@@ -550,58 +515,11 @@ export class Orchestrator {
     await this.refreshTray();
   }
 
-  private async handleFsChanges(changes: ipc.FsChange[]) {
-    if (useAppStore.getState().watchPaused) return;
-    let structural = false;
-    for (const change of changes) {
-      if (change.kind === "project-added" || change.kind === "project-removed") {
-        structural = true;
-        continue;
-      }
-      const project = useAppStore
-        .getState()
-        .projects.find((p) => p.name === change.project);
-      if (project) {
-        // Re-detect lazily: a modified package.json can change the framework.
-        void this.refreshFramework(project);
-        void this.notifyChangeGitGated(project.id);
-      } else {
-        // Files landed in a dir we don't know yet (e.g. a copy in progress).
-        structural = true;
-      }
-    }
-    if (structural) {
-      await this.reconcile(true);
-    }
-  }
-
-  private async refreshFramework(project: Project) {
-    try {
-      const { input } = await detectProjectFramework(project.name);
-      const framework = detectFramework(input);
-      if (framework !== project.framework && framework !== "unknown") {
-        await ipc.db.setProjectFramework(project.id, framework);
-        useAppStore
-          .getState()
-          .setProjects(await ipc.db.listProjects());
-      }
-    } catch {
-      /* detection is best-effort */
-    }
-  }
-
   async start(): Promise<void> {
     const store = useAppStore.getState();
 
     // Notification permission (macOS prompts once).
-    try {
-      this.notifyPermission = await isPermissionGranted();
-      if (!this.notifyPermission) {
-        this.notifyPermission = (await requestPermission()) === "granted";
-      }
-    } catch {
-      this.notifyPermission = false;
-    }
+    await this.notifier.init();
 
     const [root, paused, onboarded] = await Promise.all([
       ipc.fs.getRootFolder(),
@@ -633,7 +551,9 @@ export class Orchestrator {
     await this.refreshTray();
 
     // Wire native events.
-    await ipc.events.onFsChanged((changes) => void this.handleFsChanges(changes));
+    await ipc.events.onFsChanged(
+      (changes) => void this.reconciler.handleFsChanges(changes),
+    );
     await ipc.events.onWatcherPaused((p) => {
       useAppStore.getState().setWatchPaused(p);
       this.queue.setPaused(p);
@@ -646,13 +566,18 @@ export class Orchestrator {
     // Establish connectivity BEFORE draining held changes — draining while
     // actually offline would just re-hold them (harmless), but draining
     // after the state is known avoids doomed deploys on flaky startups.
-    await this.startOnlineMonitor();
+    this.connectivity.onChange((online) => {
+      useAppStore.getState().setOnline(online);
+      this.queue.setOffline(!online);
+      if (online) void this.refreshAuth();
+    });
+    await this.connectivity.start();
     await this.drainPersistedDirty();
   }
 
   /**
    * Changes held during a previous offline session: deploy them now (or
-   * re-hold if still offline — notifyChange re-persists in that case).
+   * re-hold if still offline — the queue re-persists in that case).
    */
   private async drainPersistedDirty(): Promise<void> {
     try {
@@ -671,130 +596,13 @@ export class Orchestrator {
     }
   }
 
-  /**
-   * Connectivity monitoring: `navigator.onLine` events give an instant
-   * offline signal; a TCP probe to api.vercel.com (via Rust) is the source
-   * of truth, since onLine reports true on internet-less LANs. While
-   * offline, probes re-run frequently so reconnection is caught fast.
-   */
-  private startOnlineMonitor(): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const applyOnline = (online: boolean) => {
-      const was = useAppStore.getState().online;
-      if (was !== online) {
-        useAppStore.getState().setOnline(online);
-        this.queue.setOffline(!online);
-        if (online) void this.refreshAuth();
-      }
-    };
-
-    const probe = async () => {
-      const online = navigator.onLine
-        ? await ipc.network.checkOnline().catch(() => false)
-        : false;
-      applyOnline(online);
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void probe(), online ? 60_000 : 10_000);
-    };
-
-    window.addEventListener("offline", () => applyOnline(false));
-    window.addEventListener("online", () => void probe());
-    return probe();
+  refreshAuth(): Promise<void> {
+    return this.session.refreshIdentity();
   }
 
-  async refreshAuth(): Promise<void> {
-    try {
-      // getAuthToken() refreshes near-expiry sessions and re-imports from
-      // the CLI when the keychain is empty (see core/auth.ts).
-      const hadToken = Boolean(await ipc.credentials.getToken().catch(() => null));
-      const token = await getAuthToken();
-      if (!token) {
-        // Last resort: a fresh CLI login the user just completed.
-        const imported = await importFromCli();
-        if (imported) {
-          this.notify(
-            "Signed in via Vercel CLI",
-            `Using your Vercel CLI session (${imported.username}).`,
-          );
-          useAppStore.getState().setAuthedAs(imported.username);
-          return;
-        }
-        useAppStore.getState().setAuthedAs(null);
-        return;
-      }
-      const user = await api.run(api.getUser({ token }));
-      useAppStore.getState().setAuthedAs(user.username, user.avatarUrl);
-      if (!hadToken) {
-        this.notify(
-          "Signed in via Vercel CLI",
-          `Using your Vercel CLI session (${user.username}).`,
-        );
-      }
-      await this.detectAccountSwitch(user.uid, user.username);
-    } catch {
-      useAppStore.getState().setAuthedAs(null);
-    }
-  }
-
-  /**
-   * The token's owner changed since last session. This is ambiguous: same
-   * team, new seat → existing project links still work; different account →
-   * they don't. Only the user knows, so surface a banner and wait for an
-   * explicit choice (resolveAccountSwitch). Until then, deploys to linked
-   * projects may fail with permission errors — annoying but honest.
-   */
-  private async detectAccountSwitch(uid: string, username: string) {
-    try {
-      const storedUid = await ipc.db.getSetting("auth_user_id");
-      const storedName = (await ipc.db.getSetting("auth_username")) ?? "previous account";
-      if (storedUid && storedUid !== uid) {
-        useAppStore.getState().setAccountSwitch({ from: storedName, to: username });
-        return; // settings update deferred until the user chooses
-      }
-      if (!storedUid) {
-        await ipc.db.setSetting("auth_user_id", uid);
-        await ipc.db.setSetting("auth_username", username);
-      }
-    } catch (err) {
-      log.warn("auth", `account-switch detection failed: ${describeError(err)}`);
-    }
-  }
-
-  /**
-   * User chose how to handle the switch. keepLinks = same-team scenario:
-   * project links remain valid for the new user. Otherwise unlink every
-   * project locally (clear vercel ids, teams, git-integration state and the
-   * .vercel link files) so next deploys create fresh projects under the new
-   * account. Local history and the old remote projects are untouched.
-   */
-  async resolveAccountSwitch(keepLinks: boolean): Promise<void> {
-    const { accountSwitch, projects } = useAppStore.getState();
-    if (!accountSwitch) return;
-    if (!keepLinks) {
-      for (const p of projects) {
-        await ipc.db.setProjectLink(p.id, null).catch(() => {});
-        await ipc.db.setProjectTeam(p.id, null).catch(() => {});
-        await ipc.db.setRemoteRepo(p.id, "").catch(() => {});
-        await ipc.files.removeProjectLink(p.name).catch(() => {});
-      }
-      this.integrationChecked.clear();
-    }
-    const token = await getAuthToken();
-    if (token) {
-      const user = await api.run(api.getUser({ token })).catch(() => null);
-      if (user) {
-        await ipc.db.setSetting("auth_user_id", user.uid).catch(() => {});
-        await ipc.db.setSetting("auth_username", user.username).catch(() => {});
-      }
-    }
-    useAppStore.getState().setAccountSwitch(null);
-    useAppStore.getState().setProjects(await ipc.db.listProjects());
-
-    // Deploy the changes that piled up while the banner was open.
-    const held = [...this.heldByAccountSwitch];
-    this.heldByAccountSwitch.clear();
-    for (const id of held) void this.notifyChangeGitGated(id);
+  /** User chose how to handle an account switch (Keep Links / Start Fresh). */
+  resolveAccountSwitch(keepLinks: boolean): Promise<void> {
+    return this.session.resolveSwitch(keepLinks ? "keep" : "fresh");
   }
 }
 
