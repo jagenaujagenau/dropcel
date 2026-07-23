@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/*
+ * Vercel brand tokens (https://vercel.com/design.md → geist/vercel-brand.css),
+ * vendored verbatim. light-dark() makes the whole app follow the system
+ * theme; our Tailwind semantic names below map onto these, so components
+ * never reference --vbg-* directly.
+ */
+:root {
+  color-scheme: light dark;
+
+  --vbg-background-100: light-dark(oklch(1 0 0), oklch(0 0 0));
+  --vbg-background-200: light-dark(oklch(0.984 0 0), oklch(0.027 0 0));
+  --vbg-surface-contrast: oklch(0.205 0 0);
+
+  --vbg-gray-100: light-dark(oklch(0.961 0 0), oklch(0.218 0 0));
+  --vbg-gray-200: light-dark(oklch(0.94 0 0), oklch(0.239 0 0));
+  --vbg-gray-300: light-dark(oklch(0.925 0 0), oklch(0.281 0 0));
+  --vbg-gray-400: light-dark(oklch(0.937 0 0), oklch(0.301 0 0));
+  --vbg-gray-500: light-dark(oklch(0.836 0 0), oklch(0.39 0 0));
+  --vbg-gray-600: light-dark(oklch(0.732 0 0), oklch(0.623 0 0));
+  --vbg-gray-700: light-dark(oklch(0.65 0 0), oklch(0.65 0 0));
+  --vbg-gray-800: light-dark(oklch(0.59 0 0), oklch(0.59 0 0));
+  --vbg-gray-900: light-dark(oklch(0.42 0 0), oklch(0.706 0 0));
+  --vbg-gray-1000: light-dark(oklch(0.205 0 0), oklch(0.946 0 0));
+
+  --vbg-gray-alpha-100: light-dark(oklch(0 0 0 / 0.05), oklch(1 0 0 / 0.07));
+  --vbg-gray-alpha-300: light-dark(oklch(0 0 0 / 0.1), oklch(1 0 0 / 0.13));
+  --vbg-gray-alpha-400: light-dark(oklch(0 0 0 / 0.08), oklch(1 0 0 / 0.14));
+  --vbg-gray-alpha-500: light-dark(oklch(0 0 0 / 0.21), oklch(1 0 0 / 0.24));
+  --vbg-gray-alpha-700: light-dark(oklch(0 0 0 / 0.44), oklch(1 0 0 / 0.54));
+
+  --vbg-blue-700: light-dark(oklch(57.61% 0.2508 258.23), oklch(57.61% 0.2321 258.23));
+  --vbg-blue-900: light-dark(oklch(53.18% 0.2399 256.99), oklch(71.7% 0.1648 250.794));
+  --vbg-green-900: light-dark(oklch(51.75% 0.1453 147.65), oklch(73.1% 0.2158 148.29));
+  --vbg-amber-900: light-dark(oklch(52.79% 0.1496 54.65), oklch(77.21% 0.1991 64.28));
+  --vbg-red-700: light-dark(oklch(62.56% 0.2524 23.03), oklch(62.56% 0.2234 23.03));
+
+  --vbg-text-primary: var(--vbg-gray-1000);
+  --vbg-text-secondary: var(--vbg-gray-900);
+  --vbg-border-subtle: var(--vbg-gray-alpha-300);
+  --vbg-border-default: var(--vbg-gray-alpha-400);
+  --vbg-border-strong: var(--vbg-gray-alpha-700);
+  --vbg-color-success: var(--vbg-green-900);
+  --vbg-color-warning: var(--vbg-amber-900);
+  --vbg-color-error: var(--vbg-red-700);
+  --vbg-focus: light-dark(var(--vbg-blue-700), var(--vbg-blue-900));
+
+  --vbg-radius-small: 6px;
+  --vbg-radius: 8px;
+}
+
+@theme {
+  /* Semantic names used throughout components → Vercel brand tokens. */
+  --color-background: var(--vbg-background-100);
+  --color-surface: var(--vbg-background-200);
+  --color-surface-hover: var(--vbg-gray-alpha-100);
+  --color-border: var(--vbg-border-default);
+  --color-border-strong: var(--vbg-border-strong);
+  --color-foreground: var(--vbg-text-primary);
+  --color-muted: var(--vbg-text-secondary);
+  --color-faint: var(--vbg-gray-800);
+  --color-accent: var(--vbg-gray-1000);
+  --color-accent-foreground: var(--vbg-background-100);
+  --color-success: var(--vbg-color-success);
+  --color-warning: var(--vbg-color-warning);
+  --color-danger: var(--vbg-color-error);
+  --color-focus: var(--vbg-focus);
+
+  /* Brand radii: 6px small, 8px default — nothing rounder. */
+  --radius-md: var(--vbg-radius-small);
+  --radius-lg: var(--vbg-radius);
+  --radius-xl: var(--vbg-radius);
+  --radius-2xl: var(--vbg-radius);
+
+  --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased select-none;
+  font-family: var(--font-sans);
+  /* --vbg-type-label; app chrome is dense UI */
+  font-size: 0.8125rem;
+  line-height: 18px;
+}
+
+/* macOS overlay titlebar: make the top strip draggable */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag a {
+  -webkit-app-region: no-drag;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--vbg-gray-alpha-500);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--vbg-focus);
+  outline-offset: 1px;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+/* Drop overlay: quick fade/scale entrance */
+@keyframes drop-overlay-in {
+  from {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.drop-overlay {
+  animation: drop-overlay-in 160ms ease-out;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .drop-overlay {
+    animation: none;
+  }
+}
