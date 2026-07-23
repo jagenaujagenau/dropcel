@@ -1,0 +1,71 @@
+[package]
+name = "dropcel"
+version = "0.1.0"
+description = "Drop a project into a folder. Seconds later, it's live."
+authors = ["Dropcel"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "Dropcel"
+path = "src/main.rs"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dropcel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8.2.0"
+notify-debouncer-full = "0.7.0"
+tokio = { version = "1.53.1", features = ["process", "io-util", "macros", "sync", "time", "net"] }
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-dialog = "2.7.2"
+dirs = "6.0.0"
+thiserror = "2.0.19"
+chrono = "0.4.45"
+uuid = { version = "1.24.0", features = ["v4"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+tauri-plugin-clipboard-manager = "2.3.2"
+base64 = "0.22.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+trash = "5.2.6"
+tauri-plugin-http = "2.5.9"
+sha1 = "0.11.0"
+
+[dev-dependencies]
+resvg = "0.47.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSImage",
+  "NSWorkspace",
+  "NSGraphics",
+  "NSApplication",
+  "NSWindow",
+  "NSView",
+  "NSResponder",
+  "NSControl",
+  "NSButton",
+  "NSStatusBarButton",
+  "NSDragging",
+  "NSPasteboard",
+  "NSPasteboardItem",
+  "NSRunningApplication",
+] }
+
