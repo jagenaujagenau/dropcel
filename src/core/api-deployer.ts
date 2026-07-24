@@ -115,7 +115,7 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
       for (let round = 0; round < 3 && !deployment; round++) {
         const created = yield* api.createDeployment(auth, input).pipe(
           Effect.map((d) => ({ ok: true as const, d })),
-          Effect.catchAll((e: VercelApiError) => {
+          Effect.catch((e: VercelApiError) => {
             const missing = missingShas(e);
             if (missing && round < 2) return Effect.succeed({ ok: false as const, missing });
             return Effect.fail(fromApi(e));
@@ -164,7 +164,7 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
             api.getDeployment(auth, deployment.id).pipe(Effect.mapError(fromApi)),
             api
               .getDeploymentEvents(auth, deployment.id, lastEventTs || undefined)
-              .pipe(Effect.catchAll(() => Effect.succeed([] as api.BuildEvent[]))),
+              .pipe(Effect.catch(() => Effect.succeed([] as api.BuildEvent[]))),
           ],
           { concurrency: 2 },
         );
@@ -234,7 +234,7 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
         createdVercelId = id;
       }).pipe(
         // Failures become outcomes; the promise only rejects on interruption.
-        Effect.catchAll((e) =>
+        Effect.catch((e) =>
           Effect.succeed(failedOutcome(e instanceof DeployError ? e : new DeployError(String(e), false))),
         ),
       );

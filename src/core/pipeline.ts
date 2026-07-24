@@ -32,7 +32,7 @@ function attempt(
   req: DeployRequest,
   onProgress: (p: DeployProgress) => void,
 ): Effect.Effect<DeployOutcome, DeployFailure> {
-  return Effect.async<DeployOutcome, DeployFailure>((resume) => {
+  return Effect.callback<DeployOutcome, DeployFailure>((resume) => {
     let handle: DeployHandle | null = null;
     handle = deployer.deploy(req, onProgress);
     void handle.done.then((outcome) => {
@@ -57,11 +57,6 @@ export function executeDeployment(
 ): Effect.Effect<DeployOutcome, never> {
   let attemptNumber = req.attempt;
 
-  const policy = Schedule.exponential(Duration.millis(options.baseDelayMs)).pipe(
-    Schedule.intersect(Schedule.recurs(options.maxRetries)),
-    Schedule.whileInput((f: DeployFailure) => f.outcome.retryable),
-  );
-
   // suspend: each retry re-evaluates with the current attempt number.
   return Effect.suspend(() =>
     attempt(deployer, { ...req, attempt: attemptNumber }, onProgress),
@@ -75,7 +70,12 @@ export function executeDeployment(
         }
       }),
     ),
-    Effect.retry(policy),
-    Effect.catchAll((f: DeployFailure) => Effect.succeed(f.outcome)),
+    // v3's exponential ∩ recurs(n) ∩ whileInput(retryable), as v4 retry options.
+    Effect.retry({
+      schedule: Schedule.exponential(Duration.millis(options.baseDelayMs)),
+      times: options.maxRetries,
+      while: (f: DeployFailure) => f.outcome.retryable,
+    }),
+    Effect.catch((f: DeployFailure) => Effect.succeed(f.outcome)),
   );
 }

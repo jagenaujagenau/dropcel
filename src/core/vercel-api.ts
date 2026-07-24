@@ -2,12 +2,12 @@ import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
-} from "@effect/platform";
+} from "effect/unstable/http";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { Data, Effect, Layer, ManagedRuntime } from "effect";
 
 /**
- * The Vercel REST API client, built on @effect/platform's HttpClient. The
+ * The Vercel REST API client, built on effect/unstable/http's HttpClient. The
  * fetch implementation is Tauri's (Rust-side HTTP), so requests are immune
  * to webview CORS restrictions. Every method is an Effect; `run` converts to
  * a Promise at the promise-based application boundary.
