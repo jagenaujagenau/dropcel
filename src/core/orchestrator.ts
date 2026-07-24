@@ -18,6 +18,7 @@ import { DeploymentQueue, type TransitionInfo } from "./queue";
 import { Reconciler } from "./reconciler";
 import type { Deployment, DeploymentState, DeployTarget } from "./types";
 import * as api from "./vercel-api";
+import { createWatchStreamBridge, type WatchStreamPort } from "./watch-stream";
 
 /**
  * The orchestrator is the application's spine — and its composition root:
@@ -59,6 +60,7 @@ export class Orchestrator {
   private readonly held: HeldChanges;
   private readonly session: AccountSession;
   private readonly reconciler: Reconciler;
+  private readonly watchStream: WatchStreamPort;
 
   constructor() {
     const effects = createTauriEffects();
@@ -186,6 +188,10 @@ export class Orchestrator {
       onProjectGone: (projectId) => this.queue.remove(projectId),
       onReconciled: () => this.refreshTray(),
     });
+
+    this.watchStream = createWatchStreamBridge((changes) =>
+      this.reconciler.handleFsChanges(changes),
+    );
   }
 
   private async persistTransition(
@@ -550,9 +556,7 @@ export class Orchestrator {
     await this.refreshTray();
 
     // Wire native events.
-    await ipc.events.onFsChanged(
-      (changes) => void this.reconciler.handleFsChanges(changes),
-    );
+    await this.watchStream.start();
     await ipc.events.onWatcherPaused((p) => {
       useAppStore.getState().setWatchPaused(p);
       this.queue.setPaused(p);
