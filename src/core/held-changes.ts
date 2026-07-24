@@ -120,6 +120,13 @@ export const make = (options: HeldChangesOptions = {}) =>
     return HeldChangesService.of({ mark, release, releaseOne, isHeld, heldBy });
   });
 
+/** Test/composition seam: a `Layer` built straight from `HeldChangesOptions`
+ * fakes, mirroring `ipc.ts`'s `layerFrom` — lets tests provide the service
+ * through its real `Layer.effect` wiring instead of hand-calling `make`. */
+export const layerFrom = (
+  options: HeldChangesOptions = {},
+): Layer.Layer<HeldChangesService> => Layer.effect(HeldChangesService, make(options));
+
 /**
  * Real layer: the offline component is persisted through the dirty_projects
  * setting, fire-and-forget (persistence failures must never block a drain).
