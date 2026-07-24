@@ -1,6 +1,6 @@
 [package]
 name = "dropcel"
-version = "0.2.0"
+version = "0.2.1"
 description = "Drop a project into a folder. Seconds later, it's live."
 authors = ["Dropcel"]
 edition = "2021"
