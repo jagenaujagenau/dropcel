@@ -1,30 +1,76 @@
 import { useEffect } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft, FolderOpen, Pause, Settings as SettingsIcon, Triangle, WifiOff } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpCircle,
+  FolderOpen,
+  Loader2,
+  Pause,
+  Settings as SettingsIcon,
+  Triangle,
+  WifiOff,
+} from "lucide-react";
 import { DropZone } from "./components/DropZone";
 import { UserAvatar } from "./components/UserAvatar";
 import { Button } from "./components/ui/button";
 import {
   accountStateAtom,
+  installUpdateAndRelaunch,
   onboardedAtom,
   onlineAtom,
   resolveAccountSwitch,
   routeAtom,
   setOnboardedLocal,
   setRoute,
+  updateStatusAtom,
   useAtomState,
   watchPausedAtom,
 } from "./core/atoms";
 import { start as startApp } from "./core/composition";
+import type { UpdateStatus } from "./core/updater";
 import * as ipc from "./lib/ipc";
 import { Dashboard } from "./pages/Dashboard";
 import { Onboarding } from "./pages/Onboarding";
 import { Settings } from "./pages/Settings";
 
+const IDLE_UPDATE_STATUS: UpdateStatus = { _tag: "idle" };
+
+/** Header pill — shown once a check finds a newer release. Confirms before
+ * installing since installAndRelaunch interrupts the current session. On
+ * success the app relaunches and this never renders again; on failure the
+ * status moves to "error" (pill disappears) — Settings' "Check for Updates"
+ * is where a retry lives. */
+function UpdatePill({ status }: { status: UpdateStatus }) {
+  if (status._tag !== "available" && status._tag !== "installing") return null;
+  const installing = status._tag === "installing";
+
+  const install = async () => {
+    if (status._tag !== "available") return;
+    const yes = await ask(`Downloads and installs Dropcel ${status.version}, then restarts the app.`, {
+      title: "Install Update",
+      kind: "info",
+    });
+    if (yes) await installUpdateAndRelaunch();
+  };
+
+  return (
+    <button
+      className="flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success hover:bg-success/15 disabled:opacity-70"
+      disabled={installing}
+      onClick={() => void install()}
+      title={status._tag === "available" ? (status.notes ?? undefined) : undefined}
+    >
+      {installing ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowUpCircle className="h-3 w-3" />}
+      {installing ? "Installing…" : `Update to ${status.version}`}
+    </button>
+  );
+}
+
 export default function App() {
   const route = useAtomState(routeAtom, { name: "dashboard" } as const);
   const watchPaused = useAtomState(watchPausedAtom, false);
   const online = useAtomState(onlineAtom, true);
+  const updateStatus = useAtomState(updateStatusAtom, IDLE_UPDATE_STATUS);
   const accountState = useAtomState(accountStateAtom, {
     username: null,
     avatarUrl: null,
@@ -75,6 +121,7 @@ export default function App() {
             <WifiOff className="h-3 w-3" /> Offline — changes held
           </span>
         )}
+        <UpdatePill status={updateStatus} />
         <div className="ml-auto flex items-center gap-1">
           {authedAs && (
             <span className="mr-1 flex items-center gap-1.5 text-[11px] text-faint">

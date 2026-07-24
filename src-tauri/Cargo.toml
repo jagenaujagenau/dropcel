@@ -1,6 +1,6 @@
 [package]
 name = "dropcel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drop a project into a folder. Seconds later, it's live."
 authors = ["Dropcel"]
 edition = "2021"
@@ -44,6 +44,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 trash = "5.2.6"
 tauri-plugin-http = "2.5.9"
 sha1 = "0.11.0"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 resvg = "0.47.0"

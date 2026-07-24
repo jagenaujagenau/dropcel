@@ -4,8 +4,19 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { AccountSessionService } from "./account-session";
 import { AppState, appStateShape } from "./app-state";
-import { AppLive, deployProject, managedRuntime, purgeProject, reconcile, refreshAuth, resolveAccountSwitch } from "./composition";
+import {
+  AppLive,
+  checkForUpdates,
+  deployProject,
+  installUpdateAndRelaunch,
+  managedRuntime,
+  purgeProject,
+  reconcile,
+  refreshAuth,
+  resolveAccountSwitch,
+} from "./composition";
 import { Connectivity } from "./effects";
+import { Updater } from "./updater";
 import { applyTheme, cacheTheme, type Theme } from "../lib/theme";
 import type { Route } from "./app-state";
 import type { Project } from "./types";
@@ -51,6 +62,9 @@ export const accountStateAtom = runtime.subscriptionRef(
 
 /** Connectivity — sourced straight from `Connectivity.online`. */
 export const onlineAtom = runtime.subscriptionRef(Effect.map(Connectivity, (c) => c.online));
+
+/** Self-update status — sourced straight from `Updater.status`. */
+export const updateStatusAtom = runtime.subscriptionRef(Effect.map(Updater, (u) => u.status));
 
 /** The typed failure from the last `acquireToken` cascade — see
  * `account-session.ts`'s `AccountState.lastAuthError` doc comment. Narrowed
@@ -178,4 +192,12 @@ export function setProjectsLocal(projects: Project[]): void {
   Effect.runSync(SubscriptionRef.set(appStateShape.projects, projects));
 }
 
-export { deployProject, purgeProject, reconcile, refreshAuth, resolveAccountSwitch };
+export {
+  checkForUpdates,
+  deployProject,
+  installUpdateAndRelaunch,
+  purgeProject,
+  reconcile,
+  refreshAuth,
+  resolveAccountSwitch,
+};

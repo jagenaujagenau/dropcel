@@ -30,6 +30,8 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| startup::init(app))
         // Closing the window keeps the app alive in the tray — deployments
         // continue in the background, Dropbox-style.

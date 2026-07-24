@@ -1,9 +1,20 @@
 import { useEffect, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
+import { getVersion } from "@tauri-apps/api/app";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FileText, Loader2, LogOut, Monitor, Moon, Sun, Triangle } from "lucide-react";
+import {
+  CheckCircle2,
+  FileText,
+  Loader2,
+  LogOut,
+  Monitor,
+  Moon,
+  RefreshCw,
+  Sun,
+  Triangle,
+} from "lucide-react";
 import { UserAvatar } from "../components/UserAvatar";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
@@ -15,6 +26,8 @@ import { getLogPath } from "../lib/log";
 import {
   accountStateAtom,
   authErrorAtom,
+  checkForUpdates,
+  installUpdateAndRelaunch,
   latestDeploymentAtom,
   presentOnDiskAtom,
   projectsAtom,
@@ -26,10 +39,12 @@ import {
   setThemeLocal,
   setWatchPausedLocal,
   themeAtom,
+  updateStatusAtom,
   useAtomState,
   watchPausedAtom,
 } from "../core/atoms";
 import { FRAMEWORK_LABELS, type Framework, type Project } from "../core/types";
+import type { UpdateStatus } from "../core/updater";
 import * as ipc from "../lib/ipc";
 import type { Theme } from "../lib/theme";
 import { cn, timeAgo } from "../lib/utils";
@@ -251,6 +266,72 @@ function ThemeToggle() {
   );
 }
 
+const IDLE_UPDATE_STATUS: UpdateStatus = { _tag: "idle" };
+
+function updateStatusLabel(status: UpdateStatus): string {
+  switch (status._tag) {
+    case "checking":
+      return "Checking…";
+    case "upToDate":
+      return "You're up to date.";
+    case "available":
+      return `Version ${status.version} is available.`;
+    case "installing":
+      return "Installing — Dropcel will restart.";
+    case "error":
+      return status.message;
+    case "idle":
+      return "";
+  }
+}
+
+/** Manual check + confirm-then-install — see core/updater.ts. The startup
+ * check runs on its own; this is for anyone who doesn't want to wait. */
+function UpdatesSection() {
+  const status = useAtomState(updateStatusAtom, IDLE_UPDATE_STATUS);
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    void getVersion().then(setVersion).catch(() => {});
+  }, []);
+
+  const install = async () => {
+    if (status._tag !== "available") return;
+    const yes = await ask(
+      `Downloads and installs Dropcel ${status.version}, then restarts the app.`,
+      { title: "Install Update", kind: "info" },
+    );
+    if (yes) await installUpdateAndRelaunch();
+  };
+
+  const busy = status._tag === "checking" || status._tag === "installing";
+
+  return (
+    <Section title="Updates">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs">Dropcel {version}</p>
+          <p className="mt-0.5 text-[11px] text-faint">{updateStatusLabel(status)}</p>
+        </div>
+        {status._tag === "available" ? (
+          <Button size="sm" onClick={() => void install()}>
+            <CheckCircle2 className="h-3.5 w-3.5" /> Update
+          </Button>
+        ) : (
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => void checkForUpdates()}>
+            {status._tag === "checking" ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            Check for Updates
+          </Button>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function Section({
   title,
   description,
@@ -307,6 +388,8 @@ export function Settings() {
           <ThemeToggle />
         </div>
       </Section>
+
+      <UpdatesSection />
 
       <Section
         title="Sync Folder"

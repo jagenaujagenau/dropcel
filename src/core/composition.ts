@@ -36,6 +36,7 @@ import { DeployQueue, layer as deployQueueLayer, type QueueDeps } from "./queue"
 import { layer as readyEffectsLayer, ReadyEffects, type RecordVercelIdsInfo } from "./ready-effects";
 import { make as reconcilerMake, ReconcilerService, type ReconcilerHooks } from "./reconciler";
 import type { DeployTarget } from "./types";
+import { layer as updaterLayer, Updater } from "./updater";
 import { layer as watchStreamLayer, WatchStream } from "./watch-stream";
 
 /**
@@ -196,7 +197,7 @@ const ipcLayerSucceed = Layer.succeed(Ipc, ipcShape);
  * is supplied — the same shape `AppLive` was before this pass, minus the
  * three services below that now genuinely depend on siblings here. */
 const baseServicesLayer: Layer.Layer<
-  Ipc | AppState | Clipboard | Tray | Notifier | Connectivity | HeldChangesService | AccountSessionService | ReconcilerService
+  Ipc | AppState | Clipboard | Tray | Notifier | Connectivity | HeldChangesService | AccountSessionService | ReconcilerService | Updater
 > = Layer.mergeAll(
   Layer.succeed(AppState, appStateShape),
   Layer.succeed(Clipboard, clipboardShape),
@@ -204,6 +205,7 @@ const baseServicesLayer: Layer.Layer<
   Layer.succeed(HeldChangesService, heldChangesShape),
   Layer.succeed(AccountSessionService, accountSessionShape),
   Layer.succeed(ReconcilerService, reconcilerShape),
+  updaterLayer,
   layerNotifier,
   layerConnectivity({
     onChange: (online) => {
@@ -239,6 +241,7 @@ export const AppLive: Layer.Layer<
   | HeldChangesService
   | AccountSessionService
   | ReconcilerService
+  | Updater
   | DeployQueue
   | ReadyEffects
   | AutoDeployGate
@@ -325,6 +328,17 @@ export function refreshAuth(): Promise<void> {
 /** User chose how to handle an account switch (Keep Links / Start Fresh). */
 export function resolveAccountSwitch(keepLinks: boolean): Promise<void> {
   return Effect.runPromise(accountSessionShape.resolveSwitch(keepLinks ? "keep" : "fresh"));
+}
+
+/** Manual check (Settings' "Check for Updates" button) or the startup check. */
+export function checkForUpdates(): Promise<void> {
+  return managedRuntime.runPromise(Effect.andThen(Updater, (u) => u.check));
+}
+
+/** User confirmed installing an already-found update — downloads, installs,
+ * relaunches. Never called without a prior "available" status. */
+export function installUpdateAndRelaunch(): Promise<void> {
+  return managedRuntime.runPromise(Effect.andThen(Updater, (u) => u.installAndRelaunch));
 }
 
 /**
@@ -418,6 +432,13 @@ async function main(): Promise<void> {
   // the state is known avoids doomed deploys on flaky startups.
   await managedRuntime.runPromise(Effect.andThen(Connectivity, (c) => c.start));
   await drainPersistedDirty();
+
+  // Forked, not awaited: the update check must never delay startup, and a
+  // few seconds' delay keeps it off the critical path entirely (nothing
+  // else at launch is waiting on it).
+  managedRuntime.runFork(
+    Effect.andThen(Updater, (u) => u.check).pipe(Effect.delay("4 seconds")),
+  );
 }
 
 let started = false;
