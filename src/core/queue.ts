@@ -212,23 +212,25 @@ export const make = (deps: QueueDeps) =>
       );
 
     /** Persist a new deployment row (with fresh git info), returns its id. */
-    const createDeployment = (projectId: string, target: DeployTarget) =>
-      Effect.gen(function* () {
-        const project = (yield* SubscriptionRef.get(appState.projects)).find(
-          (p) => p.id === projectId,
-        );
-        const git = project
-          ? yield* refreshGitInfo(ipc, appState, projectId, project.name)
-          : null;
-        const dep = yield* ipc.db.insertDeployment(
-          projectId,
-          target,
-          git?.branch ?? null,
-          git?.sha ?? null,
-        );
-        yield* appState.upsertDeployment(dep);
-        return dep.id;
-      });
+    const createDeployment = Effect.fn("DeployQueue.createDeployment")(function* (
+      projectId: string,
+      target: DeployTarget,
+    ) {
+      const project = (yield* SubscriptionRef.get(appState.projects)).find(
+        (p) => p.id === projectId,
+      );
+      const git = project
+        ? yield* refreshGitInfo(ipc, appState, projectId, project.name)
+        : null;
+      const dep = yield* ipc.db.insertDeployment(
+        projectId,
+        target,
+        git?.branch ?? null,
+        git?.sha ?? null,
+      );
+      yield* appState.upsertDeployment(dep);
+      return dep.id;
+    });
 
     /**
      * Guard (content-digest): skip an auto-deploy when the project's files
@@ -236,7 +238,7 @@ export const make = (deps: QueueDeps) =>
      * guard failure must never block deploys — errors resolve to `false`.
      */
     const shouldSkipAuto = (projectId: string): Effect.Effect<boolean> =>
-      Effect.gen(function* () {
+      Effect.fn("DeployQueue.shouldSkipAuto")(function* () {
         const project = (yield* SubscriptionRef.get(appState.projects)).find(
           (p) => p.id === projectId,
         );
@@ -250,7 +252,7 @@ export const make = (deps: QueueDeps) =>
           log.info("queue", `skipping auto-deploy of ${project.name}: content unchanged`);
         }
         return identical;
-      }).pipe(Effect.catch(() => Effect.succeed(false)));
+      })().pipe(Effect.catch(() => Effect.succeed(false)));
 
     const getSlot = (projectId: string): Effect.Effect<Slot> =>
       Ref.get(slots).pipe(Effect.map((m) => m.get(projectId) ?? emptySlot));
@@ -297,8 +299,8 @@ export const make = (deps: QueueDeps) =>
 
     // ---- deploy dispatch --------------------------------------------------
 
-    const enqueue = (projectId: string, target: DeployTarget): Effect.Effect<void> =>
-      Effect.gen(function* () {
+    const enqueue: (projectId: string, target: DeployTarget) => Effect.Effect<void> =
+      Effect.fn("DeployQueue.enqueue")(function* (projectId, target) {
         const project = yield* getProject(projectId);
         if (!project) {
           log.warn("queue", `cannot deploy unknown project ${projectId}`);
@@ -323,13 +325,14 @@ export const make = (deps: QueueDeps) =>
 
     /** Auto path: consult the skip guard (content unchanged → no deploy). A
      * guard failure must never block deploys. */
-    const enqueueAutoUnlessSkipped = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const skip = yield* shouldSkipAuto(projectId);
-        if (skip) return;
-        // Folder = truth: what's in the folder IS production.
-        yield* enqueue(projectId, "production");
-      });
+    const enqueueAutoUnlessSkipped: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.enqueueAutoUnlessSkipped",
+    )(function* (projectId) {
+      const skip = yield* shouldSkipAuto(projectId);
+      if (skip) return;
+      // Folder = truth: what's in the folder IS production.
+      yield* enqueue(projectId, "production");
+    });
 
     /** One deployment run, with retries, from creation through a terminal
      * state. Wrapped in `onExit` so cleanup — clearing the slot and chaining
@@ -432,58 +435,62 @@ export const make = (deps: QueueDeps) =>
 
     // ---- filesystem-change debounce ---------------------------------------
 
-    const debounceFire = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: null }));
-        // Went offline during the debounce window: hold, don't deploy.
-        if (yield* Ref.get(offlineRef)) {
-          yield* held.mark(projectId, "offline");
-          return;
-        }
-        yield* enqueueAutoUnlessSkipped(projectId);
-      });
+    const debounceFire: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.debounceFire",
+    )(function* (projectId) {
+      yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: null }));
+      // Went offline during the debounce window: hold, don't deploy.
+      if (yield* Ref.get(offlineRef)) {
+        yield* held.mark(projectId, "offline");
+        return;
+      }
+      yield* enqueueAutoUnlessSkipped(projectId);
+    });
 
-    const notifyChange = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if (yield* Ref.get(pausedRef)) return;
-        const project = yield* getProject(projectId);
-        if (!project || !project.autoDeploy) return;
-        if (yield* Ref.get(offlineRef)) {
-          yield* held.mark(projectId, "offline");
-          return;
-        }
-        const slot = yield* ensureSlot(projectId);
-        // A change during the wait restarts it — same semantics as
-        // clearTimeout + setTimeout.
-        if (slot.debounceFiber) yield* interruptForget(slot.debounceFiber);
-        const fiber = yield* forkInto(
-          Effect.sleep(Duration.millis(debounceMs)).pipe(
-            Effect.flatMap(() => debounceFire(projectId)),
-          ),
-        );
-        yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: fiber }));
-      });
+    const notifyChange: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.notifyChange",
+    )(function* (projectId) {
+      if (yield* Ref.get(pausedRef)) return;
+      const project = yield* getProject(projectId);
+      if (!project || !project.autoDeploy) return;
+      if (yield* Ref.get(offlineRef)) {
+        yield* held.mark(projectId, "offline");
+        return;
+      }
+      const slot = yield* ensureSlot(projectId);
+      // A change during the wait restarts it — same semantics as
+      // clearTimeout + setTimeout.
+      if (slot.debounceFiber) yield* interruptForget(slot.debounceFiber);
+      const fiber = yield* forkInto(
+        Effect.sleep(Duration.millis(debounceMs)).pipe(
+          Effect.flatMap(() => debounceFire(projectId)),
+        ),
+      );
+      yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: fiber }));
+    });
 
     // ---- lifecycle ----------------------------------------------------
 
-    const cancel = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const slot = yield* getSlot(projectId);
-        if (slot.debounceFiber) yield* interruptForget(slot.debounceFiber);
-        yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: null, pendingTarget: null }));
-        if (slot.active) yield* interruptForget(slot.active.fiber);
-      });
+    const cancel: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.cancel",
+    )(function* (projectId) {
+      const slot = yield* getSlot(projectId);
+      if (slot.debounceFiber) yield* interruptForget(slot.debounceFiber);
+      yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: null, pendingTarget: null }));
+      if (slot.active) yield* interruptForget(slot.active.fiber);
+    });
 
-    const remove = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        yield* cancel(projectId);
-        yield* Ref.update(slots, (m) => {
-          if (!m.has(projectId)) return m;
-          const next = new Map(m);
-          next.delete(projectId);
-          return next;
-        });
+    const remove: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.remove",
+    )(function* (projectId) {
+      yield* cancel(projectId);
+      yield* Ref.update(slots, (m) => {
+        if (!m.has(projectId)) return m;
+        const next = new Map(m);
+        next.delete(projectId);
+        return next;
       });
+    });
 
     const isActive = (projectId: string): Effect.Effect<boolean> =>
       Ref.get(slots).pipe(Effect.map((m) => m.get(projectId)?.active != null));
@@ -493,17 +500,18 @@ export const make = (deps: QueueDeps) =>
      * accumulate as a dirty set; reconnecting deploys each dirty project once
      * — Dropbox semantics ("sync when back online").
      */
-    const setOffline = (offline: boolean): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        yield* Ref.set(offlineRef, offline);
-        if (!offline) {
-          // Only projects with no remaining hold reason drain; the rest
-          // deploy when their other holds (account switch, git operation)
-          // clear.
-          const freed = yield* held.release("offline");
-          for (const projectId of freed) yield* notifyChange(projectId);
-        }
-      });
+    const setOffline: (offline: boolean) => Effect.Effect<void> = Effect.fn(
+      "DeployQueue.setOffline",
+    )(function* (offline) {
+      yield* Ref.set(offlineRef, offline);
+      if (!offline) {
+        // Only projects with no remaining hold reason drain; the rest
+        // deploy when their other holds (account switch, git operation)
+        // clear.
+        const freed = yield* held.release("offline");
+        for (const projectId of freed) yield* notifyChange(projectId);
+      }
+    });
 
     const setPaused = (paused: boolean): Effect.Effect<void> => Ref.set(pausedRef, paused);
 

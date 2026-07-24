@@ -106,8 +106,8 @@ export const make = (deps: {
     const notify = (title: string, body: string): Effect.Effect<void> =>
       notifier.notify(title, body);
 
-    const refreshTray: ReadyEffectsShape["refreshTray"] = () =>
-      Effect.gen(function* () {
+    const refreshTray: ReadyEffectsShape["refreshTray"] = Effect.fn("ReadyEffects.refreshTray")(
+      function* () {
         const projects = yield* SubscriptionRef.get(appState.projects);
         const latestByProject = yield* SubscriptionRef.get(appState.latestByProject);
         const presentOnDisk = yield* SubscriptionRef.get(appState.presentOnDisk);
@@ -131,7 +131,7 @@ export const make = (deps: {
       projectId: string,
       deployment: Deployment,
     ): Effect.Effect<string> =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.resolvePublicUrl")(function* () {
         const deploymentUrl = deployment.url ?? "";
         const project = (yield* SubscriptionRef.get(appState.projects)).find(
           (p) => p.id === projectId,
@@ -153,16 +153,16 @@ export const make = (deps: {
           aliases,
           verifiedDomains: domains.filter((d) => d.verified).map((d) => d.domain),
         });
-      }).pipe(Effect.catch(() => Effect.succeed(deployment.url ?? "")));
+      })().pipe(Effect.catch(() => Effect.succeed(deployment.url ?? "")));
 
     /** Put the fresh deployment URL in the clipboard, ready to paste/share. */
     const copyUrlToClipboard = (url: string): Effect.Effect<boolean> =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.copyUrlToClipboard")(function* () {
         const setting = yield* ipc.db.getSetting("copy_url_on_ready");
         if (setting === "0") return false;
         yield* clipboard.write(url);
         return true;
-      }).pipe(
+      })().pipe(
         Effect.catch((err) =>
           Effect.sync(() => {
             console.error("clipboard copy failed", err);
@@ -173,20 +173,20 @@ export const make = (deps: {
 
     /** Best-effort snapshot; without a Chromium-family browser this no-ops. */
     const captureSnapshot = (projectId: string, url: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.captureSnapshot")(function* () {
         const snap = yield* ipc.snapshots.capture(projectId, url);
         yield* SubscriptionRef.update(appState.snapshotByProject, (m) => ({
           ...m,
           [projectId]: snap.dataUrl,
         }));
-      }).pipe(
+      })().pipe(
         Effect.catch((err) =>
           Effect.sync(() => log.warn("snapshot", `capture skipped: ${describeError(err)}`)),
         ),
       );
 
     const onReady: ReadyEffectsShape["onReady"] = (projectId, deployment, projectName) =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.onReady")(function* () {
         let url: string | null = deployment.url;
         if (deployment.url) {
           const resolved = yield* resolvePublicUrl(projectId, deployment);
@@ -213,10 +213,10 @@ export const make = (deps: {
           "Deployment Ready",
           `${projectName ?? "Project"}\n${url ?? ""}${copied ? "\nURL copied to clipboard" : ""}`.trim(),
         );
-      }).pipe(Effect.catchCause(() => Effect.void));
+      })().pipe(Effect.catchCause(() => Effect.void));
 
     const checkRemoteIntegration: ReadyEffectsShape["checkRemoteIntegration"] = (projectId) =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.checkRemoteIntegration")(function* () {
         const project = (yield* SubscriptionRef.get(appState.projects)).find(
           (p) => p.id === projectId,
         );
@@ -239,10 +239,10 @@ export const make = (deps: {
           const fresh = yield* ipc.db.listProjects();
           yield* SubscriptionRef.set(appState.projects, fresh);
         }).pipe(Effect.catch(() => Effect.sync(() => integrationChecked.delete(projectId))));
-      });
+      })();
 
     const recordVercelIds: ReadyEffectsShape["recordVercelIds"] = (ourDeploymentId, info) =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.recordVercelIds")(function* () {
         yield* ipc.db.setDeploymentVercelIds(ourDeploymentId, info.vercelDeploymentId, info.inspectorUrl);
         const latest = yield* SubscriptionRef.get(appState.latestByProject);
         const dep = Object.values(latest).find((d) => d?.id === ourDeploymentId);
@@ -269,14 +269,14 @@ export const make = (deps: {
         const fresh = yield* ipc.db.listProjects();
         yield* SubscriptionRef.set(appState.projects, fresh);
         yield* Effect.forkDetach(checkRemoteIntegration(project.id));
-      }).pipe(
+      })().pipe(
         Effect.catch((err) =>
           Effect.sync(() => log.warn("composition", `could not record vercel ids: ${describeError(err)}`)),
         ),
       );
 
     const onTransition: ReadyEffectsShape["onTransition"] = (projectId, deploymentId, state, info) =>
-      Effect.gen(function* () {
+      Effect.fn("ReadyEffects.onTransition")(function* () {
         const dep = yield* ipc.db.updateDeployment(
           deploymentId,
           state,
@@ -308,7 +308,7 @@ export const make = (deps: {
             `${project?.name ?? "Project"} — ${info?.error ?? "open the app for details."}`,
           );
         }
-      }).pipe(
+      })().pipe(
         Effect.catch((err) =>
           Effect.sync(() => log.error("composition", `failed to persist transition: ${describeError(err)}`)),
         ),

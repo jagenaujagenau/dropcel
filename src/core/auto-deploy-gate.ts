@@ -52,96 +52,100 @@ export const make = (deps: { ipc: IpcShape; appState: AppStateShape }) =>
     /** projectId → the fiber re-checking its in-flight git operation. */
     const timers = yield* Ref.make(new Map<string, Fiber.Fiber<void>>());
 
-    const refreshGit = (projectId: string) =>
-      Effect.gen(function* () {
-        const project = (yield* SubscriptionRef.get(appState.projects)).find(
-          (p) => p.id === projectId,
-        );
-        if (!project) return null;
-        return yield* refreshGitInfo(ipc, appState, projectId, project.name);
-      });
+    const refreshGit = Effect.fn("AutoDeployGate.refreshGit")(function* (projectId: string) {
+      const project = (yield* SubscriptionRef.get(appState.projects)).find(
+        (p) => p.id === projectId,
+      );
+      if (!project) return null;
+      return yield* refreshGitInfo(ipc, appState, projectId, project.name);
+    });
 
-    const stopTimer = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const fiber = (yield* Ref.get(timers)).get(projectId);
-        if (fiber) yield* Fiber.interrupt(fiber);
-      });
+    const stopTimer: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "AutoDeployGate.stopTimer",
+    )(function* (projectId) {
+      const fiber = (yield* Ref.get(timers)).get(projectId);
+      if (fiber) yield* Fiber.interrupt(fiber);
+    });
 
-    const clearGitHold = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        yield* stopTimer(projectId);
-        yield* held.releaseOne(projectId, "git-operation");
-      });
+    const clearGitHold: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "AutoDeployGate.clearGitHold",
+    )(function* (projectId) {
+      yield* stopTimer(projectId);
+      yield* held.releaseOne(projectId, "git-operation");
+    });
 
     /** One re-check pass, 15s out. Loops on itself while the operation is
      * still in flight; on the first pass the operation is gone (or the
      * project vanished), releases the hold and — if nothing else holds the
      * project and the gate no longer applies — deploys the pending change. */
-    const holdTimerLoop = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        while (true) {
-          yield* Effect.sleep(Duration.millis(RECHECK_INTERVAL_MS));
-          const fresh = yield* refreshGit(projectId);
-          const project = (yield* SubscriptionRef.get(appState.projects)).find(
-            (p) => p.id === projectId,
-          );
-          if (project && fresh?.operation) continue; // still mid-operation — recheck again
-          const freed = yield* held.releaseOne(projectId, "git-operation");
-          if (project && freed && !shouldHoldAutoDeploy(fresh, project.lockedBranch).hold) {
-            yield* deployQueue.notifyChange(projectId);
-          }
-          return;
-        }
-      });
-
-    const startHoldTimer = (projectId: string): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if ((yield* Ref.get(timers)).has(projectId)) return;
-        const fiber = yield* Effect.forkIn(
-          // Always drop the map entry on the way out — natural completion
-          // above, or interruption via `clearGitHold`/`stopTimer` — so a
-          // finished timer never blocks the next one from starting.
-          holdTimerLoop(projectId).pipe(
-            Effect.ensuring(
-              Ref.update(timers, (m) => {
-                if (!m.has(projectId)) return m;
-                const next = new Map(m);
-                next.delete(projectId);
-                return next;
-              }),
-            ),
-          ),
-          scope,
-        );
-        yield* Ref.update(timers, (m) => new Map(m).set(projectId, fiber));
-      });
-
-    const notifyChangeGitGated: AutoDeployGateShape["notifyChangeGitGated"] = (projectId) =>
-      Effect.gen(function* () {
+    const holdTimerLoop: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "AutoDeployGate.holdTimerLoop",
+    )(function* (projectId) {
+      while (true) {
+        yield* Effect.sleep(Duration.millis(RECHECK_INTERVAL_MS));
+        const fresh = yield* refreshGit(projectId);
         const project = (yield* SubscriptionRef.get(appState.projects)).find(
           (p) => p.id === projectId,
         );
-        if (!project) return;
-        // Unresolved account switch: linked projects would deploy against
-        // the previous account and fail — hold everything until the user
-        // chooses.
-        const accountState = yield* SubscriptionRef.get(accountSession.state);
-        if (accountState.pendingSwitch) {
-          yield* held.mark(projectId, "account-switch");
-          return;
-        }
-        const git = yield* refreshGit(projectId);
-        const verdict = shouldHoldAutoDeploy(git, project.lockedBranch);
-        if (!verdict.hold) {
-          yield* clearGitHold(projectId);
+        if (project && fresh?.operation) continue; // still mid-operation — recheck again
+        const freed = yield* held.releaseOne(projectId, "git-operation");
+        if (project && freed && !shouldHoldAutoDeploy(fresh, project.lockedBranch).hold) {
           yield* deployQueue.notifyChange(projectId);
-          return;
         }
-        if (git?.operation) {
-          yield* held.mark(projectId, "git-operation");
-          yield* startHoldTimer(projectId);
-        }
-      });
+        return;
+      }
+    });
+
+    const startHoldTimer: (projectId: string) => Effect.Effect<void> = Effect.fn(
+      "AutoDeployGate.startHoldTimer",
+    )(function* (projectId) {
+      if ((yield* Ref.get(timers)).has(projectId)) return;
+      const fiber = yield* Effect.forkIn(
+        // Always drop the map entry on the way out — natural completion
+        // above, or interruption via `clearGitHold`/`stopTimer` — so a
+        // finished timer never blocks the next one from starting.
+        holdTimerLoop(projectId).pipe(
+          Effect.ensuring(
+            Ref.update(timers, (m) => {
+              if (!m.has(projectId)) return m;
+              const next = new Map(m);
+              next.delete(projectId);
+              return next;
+            }),
+          ),
+        ),
+        scope,
+      );
+      yield* Ref.update(timers, (m) => new Map(m).set(projectId, fiber));
+    });
+
+    const notifyChangeGitGated: AutoDeployGateShape["notifyChangeGitGated"] = Effect.fn(
+      "AutoDeployGate.notifyChangeGitGated",
+    )(function* (projectId) {
+      const project = (yield* SubscriptionRef.get(appState.projects)).find(
+        (p) => p.id === projectId,
+      );
+      if (!project) return;
+      // Unresolved account switch: linked projects would deploy against
+      // the previous account and fail — hold everything until the user
+      // chooses.
+      const accountState = yield* SubscriptionRef.get(accountSession.state);
+      if (accountState.pendingSwitch) {
+        yield* held.mark(projectId, "account-switch");
+        return;
+      }
+      const git = yield* refreshGit(projectId);
+      const verdict = shouldHoldAutoDeploy(git, project.lockedBranch);
+      if (!verdict.hold) {
+        yield* clearGitHold(projectId);
+        yield* deployQueue.notifyChange(projectId);
+        return;
+      }
+      if (git?.operation) {
+        yield* held.mark(projectId, "git-operation");
+        yield* startHoldTimer(projectId);
+      }
+    });
 
     return AutoDeployGate.of({ notifyChangeGitGated });
   });
