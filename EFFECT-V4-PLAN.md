@@ -35,10 +35,11 @@ Ground rules for every phase:
 
 ## Phase 1 — Typed IPC boundary
 
-- `lib/ipc.ts` becomes an `Ipc` service (`ServiceMap.Service`, the v4
-  replacement for `Context.Tag` + `Default` layers), every `invoke`
-  wrapped in `Effect.tryPromise`.
-- Rust's error kinds map to tagged errors: `ValidationError`,
+- `lib/ipc.ts` becomes an `Ipc` service (`Context.Service` tag class —
+  see borrowed patterns below), every `invoke` wrapped in
+  `Effect.tryPromise`.
+- Rust's error kinds map to `Schema.TaggedErrorClass` errors (they cross
+  the IPC wire — boundary errors are schema-backed): `ValidationError`,
   `NotFoundError`, `DbError`, `IoError`, `WatchError`, `KeychainError`,
   plus `IpcDefect` for the residual `message` kind. Typed errors enter the
   system here and flow upward for free.
@@ -109,6 +110,75 @@ Ground rules for every phase:
   instead of parsing strings.
 - `orchestrator.ts` dissolves: construction moves into the Layer graph;
   what remains is the startup effect (`main`) forked by the runtime.
+
+## Patterns borrowed from t3code (production effect@4.0.0-beta.78 + atom-react)
+
+Studied from pingdotgg/t3code (Electron desktop + web + server monorepo on
+exactly our target stack). Where their v4-native practice disagrees with
+v3-era advice, we follow them:
+
+**Idioms (apply everywhere)**
+- Services are `Context.Service` tag classes (interface only), with `make`
+  as a separate `Effect.gen`/`Effect.fn` and `export const layer =
+  Layer.effect(Tag, make)`. Not `Effect.Service`. Parameterized layers
+  (`layerX(options)`) carry static config; `layerTest` naming, no
+  `Live`/`Test` suffixes.
+- Every wrapper-style effect fn is `Effect.fn("scope.name")(function* …)`
+  — free tracing spans. Submodule imports only (`effect/Effect`,
+  `effect/unstable/http`, `effect/testing/TestClock`); no barrel imports.
+- Boundary errors are `Schema.TaggedErrorClass` (payload schema + message
+  getter, `Schema.Defect()` for carried causes); `Data.TaggedError` only
+  for purely-local errors. Our Phase 1 IPC errors are boundary errors →
+  Schema-backed.
+- Fully-qualified tag strings (`"dropcel/core/AccountSession"`).
+- Adopt their `@effect/language-service` tsconfig ruleset wholesale
+  (missingEffectServiceDependency, leakingRequirements, no-global
+  Date/Timers/Fetch in Effect, importFromBarrel) — machine-checked
+  v4-native style.
+- Pin via pnpm catalog + `overrides` so transitive deps can't drift off
+  the beta version.
+
+**Phase 2/3 (connectivity, account session)** — their
+`connection/supervisor.ts` is the template: one `run()` fiber driven by a
+`Queue<Signal>` (connect/disconnect/retry/network-changed/wakeup),
+desired-state in a `Ref`, public state in a `SubscriptionRef` React
+subscribes to, backoff table with reset-after-stable,
+`Effect.raceAllFirst` for establishment vs interrupt vs timeout,
+finalizers shutting the queue. Token injection: wrap the HttpClient with
+`HttpClient.mapRequestEffect` resolving the token at send time →
+`HttpClientRequest.bearerToken` — this replaces our getAuthToken-then-call
+pattern with a per-request interceptor.
+
+**Phase 5 (queue)** — their `DesktopBackendManager.ts` documents migrating
+*away* from a singleton service to a per-key instance factory: each
+instance owns a `Ref` state machine, a `Semaphore.make(1)` serializing
+start/stop, a fresh `Scope` per run (`Effect.forkIn` into the parent
+scope), exponential-backoff restart with a transient/fatal distinction,
+and `Effect.addFinalizer` teardown. That's our per-project deploy slot.
+Their `KeyedCoalescingWorker` (TxQueue/TxRef, keeps latest value per key,
+`Effect.txRetry` to await idle) is nearly a drop-in for per-project
+debounce/coalescing.
+
+**Phase 7 (render layer)** — query atoms via `Atom.family` keyed by
+serialized input, piped through `Atom.swr({staleTime})` +
+`Atom.setIdleTTL` + `Atom.withLabel` (devtools); live views are
+`runtime.atom(stream)` with `Stream.switchMap` re-subscribing across
+reconnects. Reads flatten `AsyncResult` behind one `useQuery`-shaped hook
+(`{data, error, isPending, refresh}`, `Option.getOrNull` +
+`Cause.squash`). Writes are **atom commands** with per-input concurrency
+policies — `"singleFlight"` (dedupe concurrent identical deploys) and
+`"latest"` (spammed deploy button coalesces) map 1:1 onto our queue
+invariants. Optimistic updates mutate a local `SubscriptionRef` the atom
+observes; the event stream reconciles. Persistence stays behind
+`Context.Service` store tags implemented once over Tauri IPC (their
+client-persistence split).
+
+**Phase 5/6 testing** — `@effect/vitest` `it.effect` +
+`TestClock.layer()` provided per test, `TestClock.adjust("1 second")` to
+fire timers, fakes as `Layer.succeed(Tag, Tag.of({...}))` driven by
+Refs/Deferreds the test controls, `awaitState` helpers observing
+`SubscriptionRef.changes`. This is the harness shape for the queue
+rewrite's assertion-parity translation.
 
 ## Risk register
 
