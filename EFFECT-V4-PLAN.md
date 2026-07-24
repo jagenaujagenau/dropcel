@@ -97,6 +97,11 @@ Ground rules for every phase:
 
 ## Phase 7 — Render layer (@effect/atom-react) + root inversion
 
+Package note: `@effect/atom-react` (not `@effect-atom/atom-react` — a
+different, v3-only community package under a similarly-named scope).
+Verified: `@effect/atom-react@4.0.0-beta.101` requires
+`effect: ^4.0.0-beta.101` exactly, matching our pin.
+
 - The atom package ships under Effect's unified versioning — same version
   as core, no v3/v4 skew.
 - The `Layer` graph lives in an `Atom.runtime`; zustand is removed; store
