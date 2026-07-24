@@ -35,16 +35,17 @@ export interface AppStateShape {
   /** null while loading, then whether first-run onboarding is complete. */
   readonly onboarded: SubscriptionRef.SubscriptionRef<boolean | null>;
 
-  readonly navigate: (route: Route) => Effect.Effect<void>;
-  readonly setProjects: (projects: Project[]) => Effect.Effect<void>;
-  readonly setPresentOnDisk: (names: string[]) => Effect.Effect<void>;
+  /**
+   * The two writes below are the only ones that encode real invariants
+   * (keeping `deploymentsByProject` and `latestByProject` in sync) — every
+   * other field is a bare `SubscriptionRef`; write it directly with
+   * `SubscriptionRef.set`/`update` rather than through a 1:1 wrapper (a
+   * prior generation of one-line setters here protected nothing — deleting
+   * them and inlining the `SubscriptionRef` call at each call site was a
+   * no-op refactor, which is exactly the sign they didn't belong).
+   */
   readonly upsertDeployment: (d: Deployment) => Effect.Effect<void>;
   readonly setDeployments: (projectId: string, list: Deployment[]) => Effect.Effect<void>;
-  readonly setSnapshot: (projectId: string, dataUrl: string) => Effect.Effect<void>;
-  readonly setGitInfo: (projectId: string, git: GitStatus | null) => Effect.Effect<void>;
-  readonly setRootFolder: (path: string) => Effect.Effect<void>;
-  readonly setWatchPaused: (paused: boolean) => Effect.Effect<void>;
-  readonly setOnboarded: (onboarded: boolean) => Effect.Effect<void>;
 }
 
 export class AppState extends Context.Service<AppState, AppStateShape>()(
@@ -92,18 +93,8 @@ export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
     watchPaused,
     onboarded,
 
-    navigate: (route_) => SubscriptionRef.set(route, route_),
-    setProjects: (projects_) => SubscriptionRef.set(projects, projects_),
-    setPresentOnDisk: (names) => SubscriptionRef.set(presentOnDisk, new Set(names)),
     upsertDeployment,
     setDeployments,
-    setSnapshot: (projectId, dataUrl) =>
-      SubscriptionRef.update(snapshotByProject, (m) => ({ ...m, [projectId]: dataUrl })),
-    setGitInfo: (projectId, git) =>
-      SubscriptionRef.update(gitByProject, (m) => ({ ...m, [projectId]: git })),
-    setRootFolder: (path) => SubscriptionRef.set(rootFolder, path),
-    setWatchPaused: (paused) => SubscriptionRef.set(watchPaused, paused),
-    setOnboarded: (onboarded_) => SubscriptionRef.set(onboarded, onboarded_),
   });
 });
 

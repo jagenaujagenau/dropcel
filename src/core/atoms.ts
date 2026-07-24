@@ -1,10 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { AccountSessionService } from "./account-session";
 import { AppState, appStateShape } from "./app-state";
 import { AppLive, deployProject, managedRuntime, purgeProject, reconcile, refreshAuth, resolveAccountSwitch } from "./composition";
 import { Connectivity } from "./effects";
+import type { Route } from "./app-state";
+import type { Project } from "./types";
 
 /**
  * The render layer's one `Atom.runtime`, sharing `managedRuntime`'s
@@ -64,24 +67,24 @@ export function useAtomState<A, E>(
 // atom-command concurrency policy is needed for the deploy button — a
 // plain `runFork`/`runPromise` call is already spam-safe.
 
-export function setRoute(route: Parameters<typeof appStateShape.navigate>[0]): void {
-  Effect.runSync(appStateShape.navigate(route));
+export function setRoute(route: Route): void {
+  Effect.runSync(SubscriptionRef.set(appStateShape.route, route));
 }
 
 export function setWatchPausedLocal(paused: boolean): void {
-  Effect.runSync(appStateShape.setWatchPaused(paused));
+  Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, paused));
 }
 
 export function setRootFolderLocal(path: string): void {
-  Effect.runSync(appStateShape.setRootFolder(path));
+  Effect.runSync(SubscriptionRef.set(appStateShape.rootFolder, path));
 }
 
 export function setOnboardedLocal(onboarded: boolean): void {
-  Effect.runSync(appStateShape.setOnboarded(onboarded));
+  Effect.runSync(SubscriptionRef.set(appStateShape.onboarded, onboarded));
 }
 
-export function setProjectsLocal(projects: Parameters<typeof appStateShape.setProjects>[0]): void {
-  Effect.runSync(appStateShape.setProjects(projects));
+export function setProjectsLocal(projects: Project[]): void {
+  Effect.runSync(SubscriptionRef.set(appStateShape.projects, projects));
 }
 
 export { deployProject, purgeProject, reconcile, refreshAuth, resolveAccountSwitch };

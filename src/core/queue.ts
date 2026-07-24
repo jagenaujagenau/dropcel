@@ -5,13 +5,16 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { log } from "../lib/log";
+import { AppState } from "./app-state";
 import type { DeployOutcome, DeployProgress, Deployer, DeployRequest } from "./deployer";
-import { HeldChanges, type HeldChangesSync } from "./held-changes";
+import { refreshGitInfo } from "./git";
+import { HeldChangesService } from "./held-changes";
+import { Ipc } from "./ipc";
 import { advance, isTerminal } from "./state-machine";
 import type { DeploymentState, DeployTarget } from "./types";
 
@@ -60,25 +63,22 @@ export const DEFAULT_PIPELINE_OPTIONS: PipelineOptions = {
 
 export interface QueueDeps {
   deployer: Deployer;
-  /** Persist a new deployment row; returns its id. */
-  createDeployment: (projectId: string, target: DeployTarget) => Promise<string>;
-  /** Persist + broadcast every state change. */
+  /**
+   * Persist + broadcast every state change. This is the one dependency that
+   * can't reduce to a `Context` requirement — it calls back into
+   * `ReadyEffects` (persist/tray/clipboard/notify), which the queue must
+   * not depend on directly (that would be a cycle: `ReadyEffects` doesn't
+   * need the queue, but wiring it in would still couple two independently
+   * testable services for no reason). Effect-returning, not
+   * Promise-returning, so the queue's own pipeline never crosses back and
+   * forth between execution models.
+   */
   onTransition: (
     projectId: string,
     deploymentId: string,
     state: DeploymentState,
     info?: TransitionInfo,
-  ) => void;
-  getProject: (projectId: string) => QueueProject | undefined;
-  /**
-   * Asked right before an automatic deploy actually starts. Return true to
-   * skip it (e.g. project content is identical to the last successful
-   * deploy). Manual deploys never consult this.
-   */
-  shouldSkipAuto?: (projectId: string) => Promise<boolean>;
-  /** Shared hold tracker — the queue owns only its 'offline' reason; other
-   * holds (account switch, git operations) belong to the composition root. */
-  held?: HeldChangesSync;
+  ) => Effect.Effect<void>;
   debounceMs?: number;
   pipeline?: PipelineOptions;
 }
@@ -192,12 +192,65 @@ export class DeployQueue extends Context.Service<DeployQueue, DeployQueueShape>(
 export const make = (deps: QueueDeps) =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
+    const held = yield* HeldChangesService;
+    const appState = yield* AppState;
+    const ipc = yield* Ipc;
     const slots = yield* Ref.make(new Map<string, Slot>());
     const pausedRef = yield* Ref.make(false);
     const offlineRef = yield* Ref.make(false);
-    const held = deps.held ?? new HeldChanges();
     const debounceMs = deps.debounceMs ?? 2_000;
     const pipelineOptions = deps.pipeline ?? DEFAULT_PIPELINE_OPTIONS;
+
+    /** The project as the queue needs it — resolved from `AppState` on every
+     * call, same freshness guarantee the old `getProject` closure gave. */
+    const getProject = (projectId: string): Effect.Effect<QueueProject | undefined> =>
+      SubscriptionRef.get(appState.projects).pipe(
+        Effect.map((projects) => {
+          const p = projects.find((x) => x.id === projectId);
+          return p ? { id: p.id, name: p.name, path: p.path, autoDeploy: p.autoDeploy } : undefined;
+        }),
+      );
+
+    /** Persist a new deployment row (with fresh git info), returns its id. */
+    const createDeployment = (projectId: string, target: DeployTarget) =>
+      Effect.gen(function* () {
+        const project = (yield* SubscriptionRef.get(appState.projects)).find(
+          (p) => p.id === projectId,
+        );
+        const git = project
+          ? yield* refreshGitInfo(ipc, appState, projectId, project.name)
+          : null;
+        const dep = yield* ipc.db.insertDeployment(
+          projectId,
+          target,
+          git?.branch ?? null,
+          git?.sha ?? null,
+        );
+        yield* appState.upsertDeployment(dep);
+        return dep.id;
+      });
+
+    /**
+     * Guard (content-digest): skip an auto-deploy when the project's files
+     * are byte-identical to what the last successful deploy shipped. A
+     * guard failure must never block deploys — errors resolve to `false`.
+     */
+    const shouldSkipAuto = (projectId: string): Effect.Effect<boolean> =>
+      Effect.gen(function* () {
+        const project = (yield* SubscriptionRef.get(appState.projects)).find(
+          (p) => p.id === projectId,
+        );
+        if (!project) return false;
+        const latest = (yield* SubscriptionRef.get(appState.latestByProject))[projectId];
+        if (latest && latest.state !== "ready") return false;
+        const current = yield* ipc.files.contentDigest(project.name);
+        const deployed = yield* ipc.db.getSetting(`content_digest:${projectId}`);
+        const identical = Boolean(deployed) && current === deployed;
+        if (identical) {
+          log.info("queue", `skipping auto-deploy of ${project.name}: content unchanged`);
+        }
+        return identical;
+      }).pipe(Effect.catch(() => Effect.succeed(false)));
 
     const getSlot = (projectId: string): Effect.Effect<Slot> =>
       Ref.get(slots).pipe(Effect.map((m) => m.get(projectId) ?? emptySlot));
@@ -246,7 +299,7 @@ export const make = (deps: QueueDeps) =>
 
     const enqueue = (projectId: string, target: DeployTarget): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const project = deps.getProject(projectId);
+        const project = yield* getProject(projectId);
         if (!project) {
           log.warn("queue", `cannot deploy unknown project ${projectId}`);
           return;
@@ -272,12 +325,8 @@ export const make = (deps: QueueDeps) =>
      * guard failure must never block deploys. */
     const enqueueAutoUnlessSkipped = (projectId: string): Effect.Effect<void> =>
       Effect.gen(function* () {
-        if (deps.shouldSkipAuto) {
-          const skip = yield* Effect.tryPromise(() => deps.shouldSkipAuto!(projectId)).pipe(
-            Effect.catch(() => Effect.succeed(false)),
-          );
-          if (skip) return;
-        }
+        const skip = yield* shouldSkipAuto(projectId);
+        if (skip) return;
         // Folder = truth: what's in the folder IS production.
         yield* enqueue(projectId, "production");
       });
@@ -290,31 +339,34 @@ export const make = (deps: QueueDeps) =>
       let deploymentId: string | null = null;
       let state: DeploymentState = "queued";
 
+      // `onTransition` is Effect-returning (see `QueueDeps`), but `setState`
+      // is called from plain, non-Effect contexts (the deployer's raw
+      // `onProgress` callback) as well as from inside `body`'s Effect.gen —
+      // `Effect.runFork` is the fire-and-forget bridge in both cases,
+      // preserving the original `void onTransition(...)` semantics exactly.
       const setState = (next: DeploymentState, info?: TransitionInfo) => {
         if (deploymentId === null || isTerminal(state)) return;
         state = next;
-        deps.onTransition(projectId, deploymentId, state, info);
+        Effect.runFork(deps.onTransition(projectId, deploymentId, state, info));
       };
 
       const body = Effect.gen(function* () {
-        const project = deps.getProject(projectId);
+        const project = yield* getProject(projectId);
         if (!project) return;
 
-        const created = yield* Effect.tryPromise(() =>
-          deps.createDeployment(projectId, target),
-        ).pipe(Effect.result);
+        const created = yield* createDeployment(projectId, target).pipe(Effect.result);
         if (Result.isFailure(created)) {
           log.warn("queue", `failed to create deployment record for ${projectId}`);
           return;
         }
         deploymentId = created.success;
         state = "queued";
-        deps.onTransition(projectId, deploymentId, state);
+        Effect.runFork(deps.onTransition(projectId, deploymentId, state));
 
         const onProgress = (p: DeployProgress) => {
           const next = advance(state, p.phase);
           if (next !== state) setState(next, p.url ? { url: p.url } : undefined);
-          else if (p.url) deps.onTransition(projectId, deploymentId!, state, { url: p.url });
+          else if (p.url) Effect.runFork(deps.onTransition(projectId, deploymentId!, state, { url: p.url }));
         };
 
         // Entering the pipeline: mark preparing before the CLI produces output.
@@ -333,7 +385,7 @@ export const make = (deps: QueueDeps) =>
           () => {
             // On retry the pipeline restarts; reflect it in the UI.
             state = "preparing";
-            deps.onTransition(projectId, deploymentId!, state);
+            Effect.runFork(deps.onTransition(projectId, deploymentId!, state));
           },
           pipelineOptions,
         );
@@ -385,7 +437,7 @@ export const make = (deps: QueueDeps) =>
         yield* updateSlot(projectId, (s) => ({ ...s, debounceFiber: null }));
         // Went offline during the debounce window: hold, don't deploy.
         if (yield* Ref.get(offlineRef)) {
-          yield* Effect.sync(() => held.mark(projectId, "offline"));
+          yield* held.mark(projectId, "offline");
           return;
         }
         yield* enqueueAutoUnlessSkipped(projectId);
@@ -394,10 +446,10 @@ export const make = (deps: QueueDeps) =>
     const notifyChange = (projectId: string): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (yield* Ref.get(pausedRef)) return;
-        const project = deps.getProject(projectId);
+        const project = yield* getProject(projectId);
         if (!project || !project.autoDeploy) return;
         if (yield* Ref.get(offlineRef)) {
-          yield* Effect.sync(() => held.mark(projectId, "offline"));
+          yield* held.mark(projectId, "offline");
           return;
         }
         const slot = yield* ensureSlot(projectId);
@@ -448,7 +500,7 @@ export const make = (deps: QueueDeps) =>
           // Only projects with no remaining hold reason drain; the rest
           // deploy when their other holds (account switch, git operation)
           // clear.
-          const freed = yield* Effect.sync(() => held.release("offline"));
+          const freed = yield* held.release("offline");
           for (const projectId of freed) yield* notifyChange(projectId);
         }
       });
@@ -469,58 +521,7 @@ export const make = (deps: QueueDeps) =>
     });
   });
 
-export const layer = (deps: QueueDeps): Layer.Layer<DeployQueue> =>
+export const layer = (
+  deps: QueueDeps,
+): Layer.Layer<DeployQueue, never, HeldChangesService | AppState | Ipc> =>
   Layer.effect(DeployQueue, make(deps));
-
-// ---- plain-TS bridge (orchestrator + UI are still un-ported) --------------
-
-/**
- * Synchronous facade over the Effect service, one `ManagedRuntime` per
- * instance. Every public method only ever forks background work (debounce
- * sleeps, deploy cycles, interruptions) — it never awaits a Promise inline —
- * so `runSync` is safe and the surface stays exactly what the orchestrator
- * and UI already call.
- */
-export class DeploymentQueue {
-  private readonly runtime: ManagedRuntime.ManagedRuntime<DeployQueue, never>;
-
-  constructor(deps: QueueDeps) {
-    this.runtime = ManagedRuntime.make(layer(deps));
-  }
-
-  private run<A>(f: (q: DeployQueueShape) => Effect.Effect<A>): A {
-    return this.runtime.runSync(Effect.flatMap(DeployQueue, f));
-  }
-
-  setPaused(paused: boolean): void {
-    this.run((q) => q.setPaused(paused));
-  }
-
-  setOffline(offline: boolean): void {
-    this.run((q) => q.setOffline(offline));
-  }
-
-  isOffline(): boolean {
-    return this.run((q) => q.isOffline());
-  }
-
-  notifyChange(projectId: string): void {
-    this.run((q) => q.notifyChange(projectId));
-  }
-
-  enqueue(projectId: string, target: DeployTarget): void {
-    this.run((q) => q.enqueue(projectId, target));
-  }
-
-  cancel(projectId: string): void {
-    this.run((q) => q.cancel(projectId));
-  }
-
-  remove(projectId: string): void {
-    this.run((q) => q.remove(projectId));
-  }
-
-  isActive(projectId: string): boolean {
-    return this.run((q) => q.isActive(projectId));
-  }
-}
