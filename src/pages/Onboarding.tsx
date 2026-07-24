@@ -4,10 +4,10 @@ import { TriangleField } from "../components/TriangleField";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { orchestrator } from "../core/orchestrator";
+import { describeAuthError } from "../core/account-session";
+import { accountStateAtom, authErrorAtom, refreshAuth, rootFolderAtom, useAtomState } from "../core/atoms";
 import * as ipc from "../lib/ipc";
 import { cn } from "../lib/utils";
-import { useAppStore } from "../store/app";
 
 /**
  * First-run experience, built around two guarantees:
@@ -18,7 +18,12 @@ import { useAppStore } from "../store/app";
  *     so the product's promise is experienced inside onboarding.
  */
 export function Onboarding({ onDone }: { onDone: () => void }) {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   const [step, setStep] = useState(0);
 
   // Auth resolved itself (CLI import at startup, or sign-in finished
@@ -31,7 +36,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center p-8">
-      <div className="w-full max-w-md">
+      <div key={step} className="step-in w-full max-w-md">
         {step === 0 && <Welcome next={() => setStep(authedAs ? 2 : 1)} />}
         {step === 1 && <Connect />}
         {step === 2 && <Ready done={onDone} />}
@@ -41,7 +46,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <span
             key={s}
             className={cn(
-              "h-1 w-6 rounded-full transition-colors",
+              "h-1 rounded-full transition-[background-color,width] duration-200 ease-out",
+              s === step ? "w-8" : "w-6",
               s <= step ? "bg-foreground" : "bg-border",
             )}
           />
@@ -52,7 +58,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 }
 
 function Welcome({ next }: { next: () => void }) {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   return (
     <div className="space-y-4 text-center">
       <TriangleField className="mx-auto h-52 w-full" />
@@ -82,13 +93,15 @@ function Connect() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const authError = useAtomState(authErrorAtom, null);
+  const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
     try {
       await ipc.credentials.setToken(token);
       setToken("");
-      await orchestrator.refreshAuth();
+      await refreshAuth();
     } finally {
       setSaving(false);
     }
@@ -100,6 +113,10 @@ function Connect() {
         <h2 className="text-lg font-semibold tracking-tight">Connect Vercel</h2>
         <p className="text-xs text-muted">Approve in your browser. That's it.</p>
       </div>
+
+      {authErrorMessage && (
+        <p className="text-center text-[11px] text-danger">{authErrorMessage}</p>
+      )}
 
       {signIn ? (
         <div className="space-y-3 rounded-xl border border-border bg-surface p-4 text-center">
@@ -159,7 +176,7 @@ function Connect() {
 }
 
 function Ready({ done }: { done: () => void }) {
-  const rootFolder = useAppStore((s) => s.rootFolder);
+  const rootFolder = useAtomState(rootFolderAtom, "");
   const [deploying, setDeploying] = useState(false);
 
   const deployExample = async () => {

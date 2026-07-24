@@ -6,6 +6,19 @@
  * theme; our Tailwind semantic names below map onto these, so components
  * never reference --vbg-* directly.
  */
+/* Manual theme override (Settings → Appearance) — see lib/theme.ts. The
+   attribute selectors below have higher specificity than the plain `:root`
+   `color-scheme: light dark` they sit next to, so they win regardless of
+   source order. Theme "system" (no attribute) leaves that base declaration
+   in charge, i.e. the OS/webview preference — unchanged from before this
+   setting existed. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 :root {
   color-scheme: light dark;
 
@@ -29,6 +42,11 @@
   --vbg-gray-alpha-400: light-dark(oklch(0 0 0 / 0.08), oklch(1 0 0 / 0.14));
   --vbg-gray-alpha-500: light-dark(oklch(0 0 0 / 0.21), oklch(1 0 0 / 0.24));
   --vbg-gray-alpha-700: light-dark(oklch(0 0 0 / 0.44), oklch(1 0 0 / 0.54));
+
+  /* Card elevation: a soft two-layer shadow, not the harsh full-strength
+     border used for modals/menus — see --color-border-hover below. */
+  --vbg-shadow-ambient: light-dark(oklch(0 0 0 / 0.05), oklch(0 0 0 / 0.4));
+  --vbg-shadow-key: light-dark(oklch(0 0 0 / 0.1), oklch(0 0 0 / 0.55));
 
   --vbg-blue-700: light-dark(oklch(57.61% 0.2508 258.23), oklch(57.61% 0.2321 258.23));
   --vbg-blue-900: light-dark(oklch(53.18% 0.2399 256.99), oklch(71.7% 0.1648 250.794));
@@ -57,6 +75,9 @@
   --color-surface-hover: var(--vbg-gray-alpha-100);
   --color-border: var(--vbg-border-default);
   --color-border-strong: var(--vbg-border-strong);
+  /* A visible but gentle step up from --color-border, for hover states that
+     shouldn't jump straight to --color-border-strong's modal-grade contrast. */
+  --color-border-hover: var(--vbg-gray-alpha-500);
   --color-foreground: var(--vbg-text-primary);
   --color-muted: var(--vbg-text-secondary);
   --color-faint: var(--vbg-gray-800);
@@ -72,6 +93,11 @@
   --radius-lg: var(--vbg-radius);
   --radius-xl: var(--vbg-radius);
   --radius-2xl: var(--vbg-radius);
+
+  /* → `shadow-card-hover` utility. Two layers (tight + ambient) read as a
+     real lift, not a flat drop-shadow. */
+  --shadow-card-hover: 0 2px 4px -1px var(--vbg-shadow-key),
+    0 16px 32px -12px var(--vbg-shadow-ambient);
 
   --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
@@ -145,9 +171,88 @@ body {
   animation: drop-overlay-in 160ms ease-out;
 }
 
+/* Dialog: the backdrop fades, the panel materializes (scale + rise) rather
+   than just fading — a translucent surface should read as arriving, not
+   blinking in. cubic-bezier(0.16,1,0.3,1) is a critically-damped decel curve
+   (no overshoot) — right for a click-triggered surface, not a flung one. */
+@keyframes dialog-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dialog-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+.dialog-backdrop {
+  animation: dialog-backdrop-in 180ms ease-out;
+}
+.dialog-panel {
+  animation: dialog-panel-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Context menu: anchored to the click point (its top-left corner sits at
+   the cursor — see context-menu.tsx), so it scales from there rather than
+   its own center. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.menu-in {
+  transform-origin: top left;
+  animation: menu-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* A surface that pops into existence beneath/above already-settled content
+   (a failed-deploy error box, the account-switch alert) — a plain fade
+   would read as a flicker given the layout shift; a small rise sells it as
+   arriving. */
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.banner-in {
+  animation: banner-in 200ms ease-out;
+}
+
+/* Onboarding's 3-step wizard: steps aren't spatially ordered on screen, so
+   a crossfade reads cleaner than implying a left/right direction that
+   isn't there. */
+@keyframes step-in {
+  from {
+    opacity: 0;
+  }
+}
+.step-in {
+  animation: step-in 160ms ease-out;
+}
+
+/* A same-size icon swap (Copy → Check) — a scale+fade in on the incoming
+   icon reads as a soft cross-fade without absolute-positioning both icons. */
+@keyframes icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+.icon-in {
+  animation: icon-in 120ms ease-out;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .drop-overlay {
+  .drop-overlay,
+  .dialog-backdrop,
+  .dialog-panel,
+  .menu-in,
+  .banner-in,
+  .step-in,
+  .icon-in {
     animation: none;
   }
 }

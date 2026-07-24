@@ -24,7 +24,7 @@ export function Dialog({ open, onClose, title, description, children, className 
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+      className="dialog-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -32,7 +32,7 @@ export function Dialog({ open, onClose, title, description, children, className 
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "w-full max-w-md rounded-xl border border-border bg-background p-4 shadow-2xl",
+          "dialog-panel w-full max-w-md rounded-xl border border-border bg-background p-4 shadow-2xl",
           className,
         )}
       >

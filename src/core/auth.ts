@@ -85,6 +85,10 @@ export async function startDeviceSignIn(): Promise<DeviceSignIn> {
   const done = (async (): Promise<ImportResult | null> => {
     let interval = authz.intervalMs;
     const deadline = Date.now() + authz.expiresInMs;
+    // `canceled` is mutated by the `cancel()` closure returned below, called
+    // from outside this IIFE (the UI's cancel button) — the linter can't see
+    // across that boundary.
+    // oxlint-disable-next-line eslint/no-unmodified-loop-condition
     while (!canceled && Date.now() < deadline) {
       await sleep(interval);
       if (canceled) return null;
@@ -118,17 +122,42 @@ export async function startDeviceSignIn(): Promise<DeviceSignIn> {
   };
 }
 
-/** OAuth refresh_token grant; persists rotated tokens. Null on any miss. */
-export async function tryOAuthRefresh(): Promise<string | null> {
+/** Why a refresh_token grant produced no token. */
+export type RefreshFailureReason = "no-refresh-token" | "rejected" | "network";
+
+export type RefreshOutcome =
+  | { ok: true; token: string }
+  | { ok: false; reason: RefreshFailureReason };
+
+/** A 4xx from the token endpoint means the grant itself was refused (the
+ * refresh token is revoked/expired); everything else is infrastructure. */
+function classifyRefreshError(err: unknown): RefreshFailureReason {
+  if (err instanceof api.VercelApiError) {
+    const status = Number(/token refresh rejected \((\d+)\)/.exec(err.message)?.[1]);
+    if (status >= 400 && status < 500 && status !== 429) return "rejected";
+  }
+  return "network";
+}
+
+/** OAuth refresh_token grant with a classified outcome; persists rotated
+ * tokens on success. The account session uses the classification to raise
+ * typed TokenRevoked / NetworkDown failures. */
+export async function oauthRefreshOutcome(): Promise<RefreshOutcome> {
   const refreshToken = await ipc.credentials.getRefreshToken().catch(() => null);
-  if (!refreshToken) return null;
+  if (!refreshToken) return { ok: false, reason: "no-refresh-token" };
   try {
     const tokens = await api.run(api.oauthRefresh(refreshToken));
     await persistSession(tokens.accessToken, tokens.refreshToken, tokens.expiresAtMs);
-    return tokens.accessToken;
-  } catch {
-    return null;
+    return { ok: true, token: tokens.accessToken };
+  } catch (err) {
+    return { ok: false, reason: classifyRefreshError(err) };
   }
+}
+
+/** OAuth refresh_token grant; persists rotated tokens. Null on any miss. */
+export async function tryOAuthRefresh(): Promise<string | null> {
+  const outcome = await oauthRefreshOutcome();
+  return outcome.ok ? outcome.token : null;
 }
 
 /** Recorded expiry of the stored token, or null (manual PAT / unknown). */

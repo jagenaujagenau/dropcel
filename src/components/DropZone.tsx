@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as ipc from "../lib/ipc";
 import { DropField } from "./DropField";
+import { Toast } from "./ui/toast";
 
 /**
  * Drop targets: the whole app window (Tauri drag-drop events) and — on
@@ -83,11 +84,7 @@ export function DropZone() {
           </div>
         </div>
       )}
-      {note && (
-        <div className="fixed bottom-4 right-4 z-[70] max-w-sm whitespace-pre-line rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed shadow-2xl">
-          {note}
-        </div>
-      )}
+      <Toast message={note} style={{ zIndex: 70 }} />
     </>
   );
 }

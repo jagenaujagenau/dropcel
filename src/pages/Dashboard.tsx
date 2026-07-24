@@ -9,18 +9,35 @@ import {
   GitBranch,
   LayoutGrid,
   List,
+  Lock,
+  MoreVertical,
+  WifiOff,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { ProjectContextMenu, type ProjectMenuState } from "../components/ProjectContextMenu";
-import { orchestrator } from "../core/orchestrator";
+import {
+  gitStatusAtom,
+  heldReasonsAtom,
+  latestDeploymentAtom,
+  presentOnDiskAtom,
+  projectSnapshotAtom,
+  projectsAtom,
+  reconcile,
+  rootFolderAtom,
+  setProjectsLocal,
+  useAtomState,
+} from "../core/atoms";
+import type { HoldReason } from "../core/held-changes";
+import { LogViewerDialog } from "../components/LogViewerDialog";
 import { SitePreview } from "../components/SitePreview";
 import { TriangleField } from "../components/TriangleField";
 import { StatusLabel } from "../components/StatusIndicator";
 import { FRAMEWORK_LABELS, publicUrlOf, type Framework, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { cn, formatDuration, timeAgo } from "../lib/utils";
-import { useAppStore } from "../store/app";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 
 /**
@@ -32,11 +49,15 @@ import { Switch } from "../components/ui/switch";
 
 type View = "grid" | "table";
 
+/** Above this count, scanning the grid/table by eye stops being enough. */
+const SEARCH_THRESHOLD = 7;
+
 export function Dashboard() {
-  const projects = useAppStore((s) => s.projects);
-  const presentOnDisk = useAppStore((s) => s.presentOnDisk);
+  const projects = useAtomState(projectsAtom, []);
+  const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
   const [menu, setMenu] = useState<ProjectMenuState | null>(null);
   const [view, setView] = useState<View>("grid");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     void ipc.db
@@ -53,6 +74,9 @@ export function Dashboard() {
   const visible = projects.filter((p) => presentOnDisk.has(p.name));
   if (visible.length === 0) return <EmptyState />;
 
+  const query = search.trim().toLowerCase();
+  const matching = query ? visible.filter((p) => p.name.toLowerCase().includes(query)) : visible;
+
   const onRowMenu = (p: Project) => (e: React.MouseEvent) => {
     e.preventDefault();
     setMenu({ x: e.clientX, y: e.clientY, project: p });
@@ -60,36 +84,50 @@ export function Dashboard() {
 
   return (
     <div className="p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs text-muted">
-          {visible.length} {visible.length === 1 ? "project" : "projects"}
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="shrink-0 text-xs text-muted">
+          {query
+            ? `${matching.length} of ${visible.length} projects`
+            : `${visible.length} ${visible.length === 1 ? "project" : "projects"}`}
         </p>
-        <div className="flex rounded-md border border-border p-0.5">
-          <ViewButton
-            active={view === "grid"}
-            onClick={() => changeView("grid")}
-            title="Card view"
-          >
-            <LayoutGrid className="h-3.5 w-3.5" />
-          </ViewButton>
-          <ViewButton
-            active={view === "table"}
-            onClick={() => changeView("table")}
-            title="Table view"
-          >
-            <List className="h-3.5 w-3.5" />
-          </ViewButton>
+        <div className="flex items-center gap-2">
+          {visible.length > SEARCH_THRESHOLD && (
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter by name…"
+              className="h-7 w-48 text-xs"
+            />
+          )}
+          <div className="flex shrink-0 rounded-md border border-border p-0.5">
+            <ViewButton
+              active={view === "grid"}
+              onClick={() => changeView("grid")}
+              title="Card view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </ViewButton>
+            <ViewButton
+              active={view === "table"}
+              onClick={() => changeView("table")}
+              title="Table view"
+            >
+              <List className="h-3.5 w-3.5" />
+            </ViewButton>
+          </div>
         </div>
       </div>
 
-      {view === "grid" ? (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {visible.map((p) => (
+      {matching.length === 0 ? (
+        <p className="mt-8 text-center text-xs text-faint">No projects match "{search.trim()}".</p>
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,400px))] gap-3">
+          {matching.map((p) => (
             <ProjectCard key={p.id} project={p} onContextMenu={onRowMenu(p)} />
           ))}
         </div>
       ) : (
-        <ProjectTable projects={visible} onRowMenu={onRowMenu} />
+        <ProjectTable projects={matching} onRowMenu={onRowMenu} />
       )}
 
       {menu && <ProjectContextMenu menu={menu} onClose={() => setMenu(null)} />}
@@ -134,7 +172,9 @@ function UrlLine({ url, className }: { url: string; className?: string }) {
         }}
         title="Open in browser"
       >
-        <span className="truncate">{url.replace("https://", "")}</span>
+        <span className="truncate" title={url}>
+          {url.replace("https://", "")}
+        </span>
         <ExternalLink className="h-3 w-3 shrink-0" />
       </button>
       <button
@@ -148,14 +188,17 @@ function UrlLine({ url, className }: { url: string; className?: string }) {
           });
         }}
       >
-        {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+        {copied ? (
+          <Check key="check" className="icon-in h-3 w-3 text-success" />
+        ) : (
+          <Copy key="copy" className="icon-in h-3 w-3" />
+        )}
       </button>
     </div>
   );
 }
 
 function AutoSwitch({ project }: { project: Project }) {
-  const setProjects = useAppStore((s) => s.setProjects);
   return (
     <Switch
       checked={project.autoDeploy}
@@ -164,19 +207,80 @@ function AutoSwitch({ project }: { project: Project }) {
         void ipc.db
           .setAutoDeploy(project.id, v)
           .then(() => ipc.db.listProjects())
-          .then(setProjects);
+          .then(setProjectsLocal);
       }}
     />
   );
 }
 
+/** Visible entry point to the right-click menu (Redeploy, View Build Log,
+ * Move to Trash, …) — right-click alone isn't discoverable. */
+function MenuButton({
+  onOpen,
+  className,
+}: {
+  onOpen: (e: React.MouseEvent) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      className={cn(
+        "rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-surface-hover hover:text-foreground group-hover:opacity-100",
+        className,
+      )}
+      title="Project menu"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(e);
+      }}
+    >
+      <MoreVertical className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 function GitBadge({ project }: { project: Project }) {
-  const git = useAppStore((s) => s.gitByProject[project.id]);
+  const git = useAtomValue(gitStatusAtom(project.id));
   if (!git?.isRepo || !git.branch) return null;
   return (
     <Badge variant={git.operation ? "warning" : "neutral"}>
       <GitBranch className="h-3 w-3" />
       {git.operation ? `${git.branch} · ${git.operation}` : git.branch}
+    </Badge>
+  );
+}
+
+/** Auto-deploy is pinned to one branch (see core/git.ts's
+ * `shouldHoldAutoDeploy`) — set via the project context menu's "Lock to
+ * Branch…". Shown here too so the lock is visible without right-clicking. */
+function LockBadge({ project }: { project: Project }) {
+  if (!project.lockedBranch) return null;
+  return (
+    <Badge title={`Auto-deploy only runs on ${project.lockedBranch}`}>
+      <Lock className="h-3 w-3" />
+      {project.lockedBranch}
+    </Badge>
+  );
+}
+
+const HOLD_LABELS: Record<HoldReason, string> = {
+  offline: "Held — offline",
+  "account-switch": "Held — account switch",
+  "git-operation": "Held — git operation",
+};
+
+/** Why this project's changes haven't deployed yet — the global offline pill
+ * in the header doesn't say *which* projects it applies to. */
+function HeldBadge({ project }: { project: Project }) {
+  const reasons = useAtomValue(heldReasonsAtom(project.id));
+  if (!reasons || reasons.length === 0) return null;
+  return (
+    <Badge
+      variant="warning"
+      title="Deploys when the hold clears — nothing is lost."
+    >
+      <WifiOff className="h-3 w-3" />
+      {HOLD_LABELS[reasons[0]]}
     </Badge>
   );
 }
@@ -190,21 +294,31 @@ function ProjectCard({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAppStore((s) => s.latestByProject[project.id]);
+  const latest = useAtomValue(latestDeploymentAtom(project.id));
   const url = publicUrlOf(latest);
+  const [logsOpen, setLogsOpen] = useState(false);
 
   return (
     <div
-      className="group rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong"
+      className="group rounded-xl border border-border bg-surface p-4 transition-colors duration-300 ease-out hover:border-border-hover hover:bg-surface-hover motion-safe:transition-all motion-safe:hover:-translate-y-1 motion-safe:hover:shadow-card-hover"
       onContextMenu={onContextMenu}
     >
-      <SitePreview projectId={project.id} hasDeployment={Boolean(latest?.url)} className="mb-3" />
+      <SitePreview
+        projectId={project.id}
+        framework={project.framework as Framework}
+        hasDeployment={Boolean(latest?.url)}
+        className="mb-3"
+      />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate font-medium">{project.name}</h3>
+            <h3 className="truncate font-medium" title={project.name}>
+              {project.name}
+            </h3>
             <Badge>{FRAMEWORK_LABELS[project.framework as Framework] ?? project.framework}</Badge>
             <GitBadge project={project} />
+            <LockBadge project={project} />
+            <HeldBadge project={project} />
             {project.remoteRepo && (
               <Badge variant="success" title={`Pushes to ${project.remoteRepo} deploy this project`}>
                 git-connected
@@ -217,18 +331,30 @@ function ProjectCard({
             <p className="mt-1 text-xs text-faint">Not deployed yet</p>
           )}
         </div>
-        <div
-          className="flex shrink-0 items-center gap-2"
-          title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
-        >
-          <span className="text-[11px] text-faint">Auto</span>
-          <AutoSwitch project={project} />
+        <div className="flex shrink-0 items-center gap-2">
+          <div
+            className="flex items-center gap-2"
+            title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
+          >
+            <span className="text-[11px] text-faint">Auto</span>
+            <AutoSwitch project={project} />
+          </div>
+          <MenuButton onOpen={onContextMenu} />
         </div>
       </div>
 
       {latest?.state === "failed" && latest.error && (
-        <div className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs leading-relaxed text-danger">
-          {latest.error}
+        <div className="banner-in mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs leading-relaxed text-danger">
+          <p>{latest.error}</p>
+          <button
+            className="mt-1 font-medium underline decoration-danger/40 underline-offset-2 hover:decoration-danger"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLogsOpen(true);
+            }}
+          >
+            View build log
+          </button>
         </div>
       )}
 
@@ -238,6 +364,13 @@ function ProjectCard({
           {latest ? `${formatDuration(latest.durationMs)} · ${timeAgo(latest.startedAt)}` : ""}
         </span>
       </div>
+      {logsOpen && latest && (
+        <LogViewerDialog
+          deploymentId={latest.id}
+          projectName={project.name}
+          onClose={() => setLogsOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -261,6 +394,7 @@ function ProjectTable({
             <th className="hidden px-3 py-2 font-medium md:table-cell">URL</th>
             <th className="hidden px-3 py-2 font-medium lg:table-cell">Updated</th>
             <th className="px-3 py-2 text-right font-medium">Auto</th>
+            <th className="px-3 py-2" aria-hidden="true" />
           </tr>
         </thead>
         <tbody>
@@ -280,15 +414,16 @@ function TableRow({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAppStore((s) => s.latestByProject[project.id]);
-  const snapshot = useAppStore((s) => s.snapshotByProject[project.id]);
+  const latest = useAtomValue(latestDeploymentAtom(project.id));
+  const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const url = publicUrlOf(latest);
   const failed = latest?.state === "failed" && latest.error;
+  const [logsOpen, setLogsOpen] = useState(false);
 
   return (
     <>
       <tr
-        className="border-b border-border/60 transition-colors last:border-0 hover:bg-surface-hover"
+        className="group border-b border-border/60 transition-colors last:border-0 hover:bg-surface-hover"
         onContextMenu={onContextMenu}
       >
         <td className="px-3 py-2">
@@ -304,12 +439,16 @@ function TableRow({
               )}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium">{project.name}</p>
+              <p className="truncate text-[13px] font-medium" title={project.name}>
+                {project.name}
+              </p>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <span className="text-[11px] text-faint">
                   {FRAMEWORK_LABELS[project.framework as Framework] ?? project.framework}
                 </span>
                 <GitBadge project={project} />
+                <LockBadge project={project} />
+                <HeldBadge project={project} />
               </div>
             </div>
           </div>
@@ -326,22 +465,38 @@ function TableRow({
         <td className="px-3 py-2 text-right">
           <AutoSwitch project={project} />
         </td>
+        <td className="px-3 py-2 text-right">
+          <MenuButton onOpen={onContextMenu} />
+        </td>
       </tr>
       {failed && (
         <tr className="border-b border-border/60 last:border-0">
-          <td colSpan={5} className="px-3 pb-2 pt-0">
-            <div className="rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
-              {latest.error}
+          <td colSpan={6} className="px-3 pb-2 pt-0">
+            <div className="banner-in rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
+              <p>{latest.error}</p>
+              <button
+                className="mt-0.5 font-medium underline decoration-danger/40 underline-offset-2 hover:decoration-danger"
+                onClick={() => setLogsOpen(true)}
+              >
+                View build log
+              </button>
             </div>
           </td>
         </tr>
+      )}
+      {logsOpen && latest && (
+        <LogViewerDialog
+          deploymentId={latest.id}
+          projectName={project.name}
+          onClose={() => setLogsOpen(false)}
+        />
       )}
     </>
   );
 }
 
 function EmptyState() {
-  const rootFolder = useAppStore((s) => s.rootFolder);
+  const rootFolder = useAtomState(rootFolderAtom, "");
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
       <TriangleField className="h-56 w-full max-w-md" />
@@ -358,7 +513,7 @@ function EmptyState() {
       </Button>
       <button
         className="text-[11px] text-faint hover:text-muted"
-        onClick={() => void orchestrator.reconcile(true)}
+        onClick={() => void reconcile(true)}
       >
         Rescan folder
       </button>

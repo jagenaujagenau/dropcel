@@ -1,32 +1,42 @@
 import { useEffect } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { ArrowLeft, FolderOpen, Pause, Settings as SettingsIcon, Triangle, WifiOff } from "lucide-react";
 import { DropZone } from "./components/DropZone";
 import { UserAvatar } from "./components/UserAvatar";
 import { Button } from "./components/ui/button";
-import { orchestrator } from "./core/orchestrator";
+import {
+  accountStateAtom,
+  onboardedAtom,
+  onlineAtom,
+  resolveAccountSwitch,
+  routeAtom,
+  setOnboardedLocal,
+  setRoute,
+  useAtomState,
+  watchPausedAtom,
+} from "./core/atoms";
+import { start as startApp } from "./core/composition";
 import * as ipc from "./lib/ipc";
 import { Dashboard } from "./pages/Dashboard";
 import { Onboarding } from "./pages/Onboarding";
 import { Settings } from "./pages/Settings";
-import { useAppStore } from "./store/app";
-
-let started = false;
 
 export default function App() {
-  const route = useAppStore((s) => s.route);
-  const navigate = useAppStore((s) => s.navigate);
-  const watchPaused = useAppStore((s) => s.watchPaused);
-  const online = useAppStore((s) => s.online);
-  const accountSwitch = useAppStore((s) => s.accountSwitch);
-  const authedAs = useAppStore((s) => s.authedAs);
-  const onboarded = useAppStore((s) => s.onboarded);
-  const setOnboarded = useAppStore((s) => s.setOnboarded);
+  const route = useAtomState(routeAtom, { name: "dashboard" } as const);
+  const watchPaused = useAtomState(watchPausedAtom, false);
+  const online = useAtomState(onlineAtom, true);
+  const accountState = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  });
+  const authedAs = accountState.username;
+  const accountSwitch = accountState.pendingSwitch;
+  const onboarded = useAtomState(onboardedAtom, null);
 
   useEffect(() => {
-    if (!started) {
-      started = true;
-      void orchestrator.start();
-    }
+    startApp();
   }, []);
 
   if (onboarded === null) {
@@ -39,7 +49,7 @@ export default function App() {
         <Onboarding
           onDone={() => {
             void ipc.db.setSetting("onboarded", "1");
-            setOnboarded(true);
+            setOnboardedLocal(true);
           }}
         />
       </div>
@@ -76,11 +86,11 @@ export default function App() {
             <FolderOpen className="h-3.5 w-3.5" /> Open Folder
           </Button>
           {route.name === "settings" ? (
-            <Button variant="ghost" size="icon" onClick={() => navigate({ name: "dashboard" })} title="Back">
+            <Button variant="ghost" size="icon" onClick={() => setRoute({ name: "dashboard" })} title="Back">
               <ArrowLeft className="h-3.5 w-3.5" />
             </Button>
           ) : (
-            <Button variant="ghost" size="icon" onClick={() => navigate({ name: "settings" })} title="Settings">
+            <Button variant="ghost" size="icon" onClick={() => setRoute({ name: "settings" })} title="Settings">
               <SettingsIcon className="h-3.5 w-3.5" />
             </Button>
           )}
@@ -90,7 +100,7 @@ export default function App() {
       {/* Content */}
       <main className="min-h-0 flex-1 overflow-auto">
         {accountSwitch && (
-          <div className="mx-6 mt-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
+          <div className="banner-in mx-6 mt-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
             <p className="text-sm font-medium">
               Vercel account changed: {accountSwitch.from} → {accountSwitch.to}
             </p>
@@ -99,13 +109,24 @@ export default function App() {
               re-create under {accountSwitch.to} on next deploy. Nothing is deleted.
             </p>
             <div className="mt-3 flex gap-2">
-              <Button size="sm" onClick={() => void orchestrator.resolveAccountSwitch(false)}>
+              <Button
+                size="sm"
+                onClick={() =>
+                  void (async () => {
+                    const yes = await ask(
+                      `Every project will re-create as a new project under ${accountSwitch.to} on its next deploy.\n\nNothing on ${accountSwitch.from} is deleted, but the two accounts' projects will no longer be linked.`,
+                      { title: `Start Fresh under ${accountSwitch.to}`, kind: "warning" },
+                    );
+                    if (yes) await resolveAccountSwitch(false);
+                  })()
+                }
+              >
                 Start Fresh under {accountSwitch.to}
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => void orchestrator.resolveAccountSwitch(true)}
+                onClick={() => void resolveAccountSwitch(true)}
               >
                 Keep Links (same team)
               </Button>

@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApiDeployer, type ApiDeployerDeps } from "./api-deployer";
 import type { DeployProgress, DeployRequest } from "./deployer";
+import type * as VercelApi from "./vercel-api";
 
 /**
  * Tests for the REST-API deployer against a scripted vercel-api module —
@@ -18,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./vercel-api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./vercel-api")>();
+  const actual = await importOriginal<typeof VercelApi>();
   return {
     ...actual,
     // Real promise boundary, fake HTTP: effects come from the mocks below.

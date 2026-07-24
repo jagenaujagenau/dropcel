@@ -2,12 +2,13 @@ import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
-} from "@effect/platform";
+} from "effect/unstable/http";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { Data, Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
+import * as Schema from "effect/Schema";
 
 /**
- * The Vercel REST API client, built on @effect/platform's HttpClient. The
+ * The Vercel REST API client, built on effect/unstable/http's HttpClient. The
  * fetch implementation is Tauri's (Rust-side HTTP), so requests are immune
  * to webview CORS restrictions. Every method is an Effect; `run` converts to
  * a Promise at the promise-based application boundary.
@@ -21,13 +22,15 @@ export interface VercelAuth {
   teamId?: string | null;
 }
 
-export class VercelApiError extends Data.TaggedError("VercelApiError")<{
-  status: number;
-  code: string | null;
-  message: string;
+/** Boundary error — crosses from the HTTP client to every caller and feeds
+ * the queue's retry policy, so it's schema-backed like the Ipc errors. */
+export class VercelApiError extends Schema.TaggedErrorClass<VercelApiError>()("VercelApiError", {
+  status: Schema.Number,
+  code: Schema.NullOr(Schema.String),
+  message: Schema.String,
   /** Extra payload, e.g. `missing` sha list on missing_files. */
-  detail: unknown;
-}> {
+  detail: Schema.Unknown,
+}) {
   get retryable(): boolean {
     return this.status === 429 || this.status >= 500 || this.status === 0;
   }

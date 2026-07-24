@@ -1,97 +1,170 @@
-import { describe, expect, it } from "vitest";
-import { HeldChanges } from "./held-changes";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import type * as Layer from "effect/Layer";
+import { HeldChangesService, layerFrom } from "./held-changes";
 
 /**
  * Tests for the unified hold tracker: overlapping reasons, exactly-once
- * draining, and persistence of the offline component.
+ * draining, and persistence of the offline component — against the Effect
+ * service, provided through its real `Layer` (`layerFrom` fakes) the same
+ * way ipc.test.ts provides `Ipc` (the sync bridge is a thin runSync facade
+ * over it).
  */
 
+interface Harness {
+  layer: Layer.Layer<HeldChangesService>;
+  snapshots: string[][];
+  changes: Record<string, string[]>[];
+}
+
+const makeHarness = (): Harness => {
+  const snapshots: string[][] = [];
+  const changes: Record<string, string[]>[] = [];
+  const layer = layerFrom({
+    persistOffline: (ids) => Effect.sync(() => void snapshots.push(ids)),
+    onChange: (m) => Effect.sync(() => void changes.push(m)),
+  });
+  return { layer, snapshots, changes };
+};
+
 describe("HeldChanges", () => {
-  it("a project with one reason drains when that reason releases", () => {
-    const held = new HeldChanges();
-    held.mark("p1", "offline");
-    expect(held.isHeld("p1")).toBe(true);
-    expect(held.release("offline")).toEqual(["p1"]);
-    expect(held.isHeld("p1")).toBe(false);
+  it.effect("a project with one reason drains when that reason releases", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      expect(yield* held.isHeld("p1")).toBe(true);
+      expect(yield* held.release("offline")).toEqual(["p1"]);
+      expect(yield* held.isHeld("p1")).toBe(false);
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("overlapping reasons: releasing one does NOT drain, releasing both drains once", () => {
-    const held = new HeldChanges();
-    held.mark("p1", "offline");
-    held.mark("p1", "account-switch");
+  it.effect(
+    "overlapping reasons: releasing one does NOT drain, releasing both drains once",
+    () => {
+      const h = makeHarness();
+      return Effect.gen(function* () {
+        const held = yield* HeldChangesService;
+        yield* held.mark("p1", "offline");
+        yield* held.mark("p1", "account-switch");
 
-    expect(held.release("offline")).toEqual([]); // still held by the switch
-    expect(held.isHeld("p1")).toBe(true);
-    expect(held.release("account-switch")).toEqual(["p1"]); // drains exactly once
-    expect(held.isHeld("p1")).toBe(false);
-    // Further releases find nothing.
-    expect(held.release("account-switch")).toEqual([]);
-    expect(held.release("offline")).toEqual([]);
+        expect(yield* held.release("offline")).toEqual([]); // still held by the switch
+        expect(yield* held.isHeld("p1")).toBe(true);
+        expect(yield* held.release("account-switch")).toEqual(["p1"]); // drains exactly once
+        expect(yield* held.isHeld("p1")).toBe(false);
+        // Further releases find nothing.
+        expect(yield* held.release("account-switch")).toEqual([]);
+        expect(yield* held.release("offline")).toEqual([]);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect("release only frees projects holding that reason", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p2", "git-operation");
+      expect(yield* held.release("offline")).toEqual(["p1"]);
+      expect(yield* held.isHeld("p2")).toBe(true);
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("release only frees projects holding that reason", () => {
-    const held = new HeldChanges();
-    held.mark("p1", "offline");
-    held.mark("p2", "git-operation");
-    expect(held.release("offline")).toEqual(["p1"]);
-    expect(held.isHeld("p2")).toBe(true);
+  it.effect("releaseOne frees a single project, respecting remaining reasons", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "git-operation");
+      yield* held.mark("p2", "git-operation");
+      yield* held.mark("p2", "offline");
+
+      expect(yield* held.releaseOne("p1", "git-operation")).toBe(true);
+      expect(yield* held.releaseOne("p2", "git-operation")).toBe(false); // still offline
+      expect(yield* held.releaseOne("p2", "offline")).toBe(true);
+      expect(yield* held.releaseOne("p2", "offline")).toBe(false); // already free
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("releaseOne frees a single project, respecting remaining reasons", () => {
-    const held = new HeldChanges();
-    held.mark("p1", "git-operation");
-    held.mark("p2", "git-operation");
-    held.mark("p2", "offline");
-
-    expect(held.releaseOne("p1", "git-operation")).toBe(true);
-    expect(held.releaseOne("p2", "git-operation")).toBe(false); // still offline
-    expect(held.releaseOne("p2", "offline")).toBe(true);
-    expect(held.releaseOne("p2", "offline")).toBe(false); // already free
+  it.effect("persists the offline component on every change, duplicates excluded", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p1", "offline"); // duplicate — no extra emission
+      yield* held.mark("p2", "offline");
+      yield* held.mark("p2", "account-switch"); // not the offline component
+      yield* held.release("offline");
+      expect(h.snapshots).toEqual([["p1"], ["p1", "p2"], []]);
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("persists the offline component on every change, duplicates excluded", () => {
-    const snapshots: string[][] = [];
-    const held = new HeldChanges({ persistOffline: (ids) => snapshots.push(ids) });
-    held.mark("p1", "offline");
-    held.mark("p1", "offline"); // duplicate — no extra emission
-    held.mark("p2", "offline");
-    held.mark("p2", "account-switch"); // not the offline component
-    held.release("offline");
-    expect(snapshots).toEqual([["p1"], ["p1", "p2"], []]);
+  it.effect("persists only projects whose reasons include offline", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "account-switch");
+      yield* held.mark("p2", "offline");
+      expect(h.snapshots).toEqual([["p2"]]);
+      // Releasing a non-offline reason never touches persistence.
+      yield* held.release("account-switch");
+      expect(h.snapshots).toEqual([["p2"]]);
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("persists only projects whose reasons include offline", () => {
-    const snapshots: string[][] = [];
-    const held = new HeldChanges({ persistOffline: (ids) => snapshots.push(ids) });
-    held.mark("p1", "account-switch");
-    held.mark("p2", "offline");
-    expect(snapshots).toEqual([["p2"]]);
-    // Releasing a non-offline reason never touches persistence.
-    held.release("account-switch");
-    expect(snapshots).toEqual([["p2"]]);
+  it.effect("round-trip: the persisted set can be re-marked after a restart", () => {
+    const a = makeHarness();
+    const b = makeHarness();
+    const programA = Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p2", "offline");
+      return a.snapshots.at(-1)!;
+    }).pipe(Effect.provide(a.layer));
+
+    return Effect.gen(function* () {
+      const persisted = yield* programA;
+
+      // "Restart": a fresh instance (fresh layer) re-marks what was persisted.
+      yield* Effect.gen(function* () {
+        const held = yield* HeldChangesService;
+        for (const id of persisted) yield* held.mark(id, "offline");
+        expect((yield* held.release("offline")).sort()).toEqual(["p1", "p2"]);
+        expect(b.snapshots.at(-1)).toEqual([]);
+      }).pipe(Effect.provide(b.layer));
+    });
   });
 
-  it("round-trip: the persisted set can be re-marked after a restart", () => {
-    const snapshots: string[][] = [];
-    const a = new HeldChanges({ persistOffline: (ids) => snapshots.push(ids) });
-    a.mark("p1", "offline");
-    a.mark("p2", "offline");
-    const persisted = snapshots.at(-1)!;
-
-    // "Restart": a fresh instance re-marks what was persisted.
-    const b = new HeldChanges({ persistOffline: (ids) => snapshots.push(ids) });
-    for (const id of persisted) b.mark(id, "offline");
-    expect(b.release("offline").sort()).toEqual(["p1", "p2"]);
-    expect(snapshots.at(-1)).toEqual([]);
+  it.effect("onChange broadcasts the full reason map, including partial releases", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p1", "account-switch");
+      yield* held.mark("p1", "offline"); // duplicate — no broadcast
+      expect(h.changes).toEqual([
+        { p1: ["offline"] },
+        { p1: ["offline", "account-switch"] },
+      ]);
+      // Releasing one of two reasons still broadcasts (the project stays
+      // held, but its reason list changed) — this is what a per-project
+      // "held" badge needs to stay accurate mid-hold, not just on drain.
+      yield* held.release("offline");
+      expect(h.changes.at(-1)).toEqual({ p1: ["account-switch"] });
+      yield* held.releaseOne("p1", "account-switch");
+      expect(h.changes.at(-1)).toEqual({});
+    }).pipe(Effect.provide(h.layer));
   });
 
-  it("heldBy reports projects per reason", () => {
-    const held = new HeldChanges();
-    held.mark("p1", "offline");
-    held.mark("p2", "account-switch");
-    held.mark("p2", "offline");
-    expect(held.heldBy("offline")).toEqual(["p1", "p2"]);
-    expect(held.heldBy("account-switch")).toEqual(["p2"]);
-    expect(held.heldBy("git-operation")).toEqual([]);
+  it.effect("heldBy reports projects per reason", () => {
+    const h = makeHarness();
+    return Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p2", "account-switch");
+      yield* held.mark("p2", "offline");
+      expect(yield* held.heldBy("offline")).toEqual(["p1", "p2"]);
+      expect(yield* held.heldBy("account-switch")).toEqual(["p2"]);
+      expect(yield* held.heldBy("git-operation")).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
   });
 });

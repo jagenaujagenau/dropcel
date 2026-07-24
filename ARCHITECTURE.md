@@ -8,20 +8,23 @@ commands and events, isolated in a single file on each side.
 ```
 ┌───────────────────────────── TypeScript ─────────────────────────────┐
 │  UI (React + Tailwind + shadcn-style components)                     │
-│  store/app.ts          zustand projection of app state               │
-│  core/orchestrator.ts  composition root: constructs + delegates      │
+│  core/atoms.ts         the render layer: one Atom.runtime over AppLive│
+│  core/composition.ts   the Layer graph (AppLive) + business logic     │
+│  core/app-state.ts     UI projection state (AppState: SubscriptionRefs)│
 │  core/reconciler.ts    folder = truth: fs changes → project changes  │
-│  core/queue.ts         debounce, per-project serialization, coalesce │
+│  core/watch-stream.ts  fs:changed → Stream<FsChange[]>, whole batches │
+│  core/queue.ts         DeployQueue: per-project fibers, debounce,    │
+│                        coalesce, retry (Schedule), cancel = interrupt│
 │  core/held-changes.ts  one ledger of holds (offline/switch/git)      │
-│  core/pipeline.ts      Effect: retry policy, interruption            │
 │  core/deployer.ts      Deployer interface (api-deployer implements)  │
-│  core/vercel-api.ts    Effect HttpClient → Vercel REST API           │
-│  core/account-session.ts token + identity lifecycle (single-flight)  │
-│  core/effects.ts       seams: Notifier, Clipboard, Tray, Connectivity│
+│  core/vercel-api.ts    effect/unstable/http → Vercel REST API        │
+│  core/account-session.ts token + identity lifecycle (Deferred/Sema)  │
+│  core/effects.ts       services: Notifier, Clipboard, Tray, Connectivity│
+│  core/ipc.ts           typed Ipc service — Rust errors → tagged errors│
 │  core/state-machine.ts pure transition table                         │
 │  core/detection.ts     pure framework detection                      │
 │  core/errors.ts        build output → actionable explanation         │
-│  lib/ipc.ts            the ONLY file that talks to Tauri             │
+│  lib/ipc.ts            the ONLY file that talks to Tauri (Promises)  │
 ├───────────────────────────────  IPC  ────────────────────────────────┤
 │  startup.rs            ordered boot wiring (logger→db→watcher→icons) │
 │  commands.rs           dumb, typed DB/watcher commands (macro-gen)   │
@@ -40,9 +43,68 @@ commands and events, isolated in a single file on each side.
   need reliability and low memory, and Tauri gives them to us natively.
 - **TypeScript owns policy** (what is a project, when to deploy, how to
   retry): this logic changes most often and benefits from fast iteration and
-  cheap testing. Every piece is a pure function or a class with injected
-  dependencies; the whole deployment queue runs under vitest with a mock
-  deployer and fake timers.
+  cheap testing.
+
+## Effect-native architecture (v4)
+
+The whole TypeScript layer runs on `effect@beta` (v4) — every module above
+is a `Context.Service` tag class with a `make`/`layer` pair, composed into
+one `AppLive: Layer.Layer<...>` in `core/composition.ts` and driven by one
+`ManagedRuntime`. There is no orchestrator class and no zustand store:
+
+- **`lib/ipc.ts`** stays the only file that calls raw Tauri `invoke`/`listen`
+  (Promise/callback surface, unchanged since before the migration).
+  **`core/ipc.ts`** wraps it into the `Ipc` service — every command becomes
+  `Effect.tryPromise`, and Rust's `{ kind, message }` rejections decode into
+  `Schema.TaggedErrorClass` errors (`ValidationError`, `NotFoundError`,
+  `DbError`, `IoError`, `WatchError`, `KeychainError`, `IpcDefect`) so
+  callers can `Effect.catchTag` instead of parsing strings. Every other
+  service depends on `Ipc`, never on `lib/ipc.ts` directly.
+- **`core/app-state.ts`** replaces the zustand store: every UI-facing field
+  (`projects`, `latestByProject`, `gitByProject`, `rootFolder`, `route`, …)
+  is a `SubscriptionRef` on the `AppState` service. SQLite is still the
+  source of truth; this is a live cache of it. Identity (`authedAs`,
+  pending account switch) and connectivity (`online`) are **not**
+  duplicated here — they read straight from `AccountSessionService.state`
+  and `Connectivity.online`, the services that already own them.
+- **`core/composition.ts`** is the composition root: it builds every
+  service once (most have no async construction — `Ref`/`SubscriptionRef`/
+  `Semaphore` state only — and are built synchronously and injected via
+  `Layer.succeed`; the three services owning a long-lived fiber —
+  `Connectivity`, `DeployQueue`, `WatchStream` — are real `Layer.effect`
+  members so their fibers live for the app's lifetime), merges them into
+  `AppLive`, and hosts the wiring between them (e.g. "the reconciler's
+  `onProjectNeedsDeploy` calls the queue", "the queue's `onTransition`
+  persists state and refreshes the tray") as plain functions closing over
+  the built shapes. `start()` forks the startup sequence once from
+  `App.tsx`'s mount effect.
+- **`core/atoms.ts`** is the render layer, built on `@effect/atom-react`
+  (the package tracks `effect`'s own beta version exactly — not
+  `@effect-atom/atom-react`, an unrelated v3-only community package). One
+  `Atom.context({ memoMap: managedRuntime.memoMap })(AppLive)` **shares its
+  memoMap with the composition root's `ManagedRuntime`** — this is load
+  bearing: without it, the render layer would independently re-run every
+  `Layer.effect` builder and end up with a second, divergent
+  `Connectivity`/`DeployQueue`/`WatchStream`, running against different
+  fibers than the ones native events actually feed. Every `SubscriptionRef`
+  becomes a `runtime.subscriptionRef(...)` atom; components read them with
+  `useAtomValue`/`useAtomState` (a small helper unwrapping the pre-mount
+  `AsyncResult.Initial` tick). Writes are plain `runPromise`/`runFork` calls
+  at the React-handler edge — no atom-command concurrency policy was
+  needed, since `DeployQueue.enqueue` already coalesces concurrent calls
+  per project.
+- Every service is independently testable under `@effect/vitest`
+  (`it.effect` + `effect/testing/TestClock` where timing matters) with no
+  Tauri, no React, and no other service running — the pattern the whole
+  migration (`EFFECT-V4-PLAN.md`) was built around, borrowed from
+  `pingdotgg/t3code`'s production use of the same stack.
+
+**Known trade-off**: per-project reads (`latestByProject`, `gitByProject`,
+`snapshotByProject`) subscribe to the whole map atom rather than a
+per-project derived one, so a card re-renders on *any* project's change,
+not only its own — zustand's fine-grained selectors aren't fully
+replicated. Data is always correct; only render frequency is coarser. A
+candidate fast-follow is `Atom.family`-derived per-project atoms.
 
 ## Filesystem watching
 
@@ -58,6 +120,18 @@ Two debounce stages, deliberately:
    batches; the queue waits for quiet before deploying. One save can never
    produce two deployments: if a change arrives while a deployment is
    running, it is coalesced into exactly one follow-up deployment.
+
+`core/watch-stream.ts` turns Tauri's `fs:changed` event into a
+`Stream<FsChange[]>` and delivers each Rust batch to the reconciler **whole
+and one at a time** (`Stream.runForEach` at its default, serial,
+concurrency) — never split across projects and never delivered
+concurrently. This matters beyond style: a single 600ms batch can carry
+structural changes for two different projects at once (the classic rename,
+where one directory vanishes and another appears in the same window), and
+the rename heuristic below depends on seeing both together in one
+`reconcile()` call. Splitting a batch across independent per-project
+deliveries would let two halves of one rename race two concurrent,
+unserialized reconcile scans against the same stale snapshot.
 
 ## Content-digest guard
 
@@ -83,11 +157,19 @@ detected → queued → preparing → uploading → building → ready
   backwards.
 - Phases come from the REST deployer (collect → upload → poll build
   state); the `Deployer` interface hides the transport entirely.
-- `pipeline.ts` wraps one deployment in Effect with
-  `Schedule.exponential ∩ recurs(n)` retries gated on `retryable` (network
-  errors and rate limits retry; build and auth errors do not).
-- Cancellation: UI → queue → `AbortController` → Effect interruption →
-  `PATCH /v12/deployments/{id}/cancel` on the remote build.
+- `queue.ts`'s `DeployQueue` service runs one deployment attempt per
+  project as a forked fiber, retrying with `Effect.retry({schedule:
+  Schedule.exponential(baseDelayMs), times: maxRetries, while: retryable})`
+  (network errors and rate limits retry; build and auth errors do not).
+- Cancellation is fiber interruption: `Fiber.interrupt` reaches the
+  deployer's `handle.cancel()` through `Effect.callback`'s interruption
+  finalizer — the same path a remote cancel `PATCH
+  /v12/deployments/{id}/cancel` needs. No `AbortController` anywhere.
+- Per-project state (debounce fiber, the one active deploy, a coalesced
+  pending target) lives in a `Ref<Map<projectId, Slot>>` inside the
+  service; a slot is reserved *synchronously* before a deploy fiber is
+  even forked, so a same-tick burst of calls for one project always
+  coalesces instead of racing two real deployments.
 
 ## Offline behavior
 
@@ -123,8 +205,8 @@ SQLite (WAL) in the platform app-data dir, owned by Rust:
 - `settings` — key/value (root folder, etc.). Tokens are **not** here; they
   live in the OS keychain.
 
-The zustand store is a projection of SQLite for rendering; the orchestrator
-is its only writer.
+`AppState`'s `SubscriptionRef`s are a projection of SQLite for rendering;
+`core/composition.ts`'s wiring functions are their only writers.
 
 ## Drag-and-drop import
 
@@ -292,8 +374,8 @@ picked up automatically via the deployment alias list.
 
 The app talks to Vercel exclusively through the REST API — the Vercel CLI is
 not used or required. `core/vercel-api.ts` is an Effect-based client built
-on `@effect/platform`'s HttpClient; the fetch implementation is provided by
-`tauri-plugin-http` (Rust-side HTTP), so requests bypass webview CORS.
+on `effect/unstable/http`'s HttpClient; the fetch implementation is provided
+by `tauri-plugin-http` (Rust-side HTTP), so requests bypass webview CORS.
 Errors are typed (`VercelApiError` with status/code and a `retryable`
 derivation feeding the queue's retry policy).
 
@@ -328,19 +410,25 @@ validates that token against `/v2/user`, and imports it into the keychain —
 zero-paste onboarding for anyone who ever ran `vercel login`. The CLI is
 never executed; its file is only read.
 
-**Imported sessions self-renew** (`core/account-session.ts` owns the whole
-token + identity lifecycle; `core/auth.ts` keeps the `getAuthToken()`
-entry point every API caller uses, delegating to the active session): the
-session's `refreshToken`
-is stored as a second keychain entry and its expiry as a setting. Within 15
+**Imported sessions self-renew** (`core/account-session.ts`'s
+`AccountSessionService` owns the whole token + identity lifecycle;
+`core/auth.ts` keeps the `getAuthToken()` entry point every API caller
+uses, delegating to the active session): the session's `refreshToken` is
+stored as a second keychain entry and its expiry as a setting. Within 15
 minutes of expiry the app runs a standard OAuth `refresh_token` grant
 against the endpoint discovered from vercel.com's OpenID configuration,
 using the CLI's public client id, and persists the rotated tokens.
-Concurrent callers share one in-flight renewal (rotated refresh tokens are
-single-use). If refresh fails, the app re-reads the CLI's auth.json (the
-CLI may have renewed its own session) before giving up. Manual PATs have
-no recorded expiry and skip all of this. "Remove token" clears access +
-refresh tokens and the expiry.
+Concurrent callers share one in-flight renewal via a `Deferred` guarded by
+a `Semaphore` (rotated refresh tokens are single-use, so only the claiming
+caller runs the chain; joiners await its result). The chain itself is a
+typed cascade — `TokenExpired` / `TokenRevoked` / `NetworkDown` /
+`NoSession` failures (`Schema.TaggedErrorClass`, boundary errors) — trying
+refresh, then re-reading the CLI's `auth.json` (it may have renewed its own
+session), before giving up. Manual PATs have no recorded expiry and skip
+all of this. "Remove token" clears access + refresh tokens and the expiry.
+Identity state (current user, pending account switch) lives in
+`AccountSessionService.state`, a `SubscriptionRef<AccountState>` the render
+layer reads directly.
 
 **Account switches are detected, not guessed.** The token owner's uid is
 persisted (`auth_user_id`); when `refreshAuth` sees a different uid, a
@@ -381,10 +469,14 @@ status projection they would also use.
 
 ## Testing
 
-The rule: **the interface is the test surface.** Policy modules take
-injected deps (the `DeploymentQueue` pattern) so they test under fakes;
-side effects hide behind seams (`core/effects.ts`, the `Deployer`) whose
-test adapters make each seam real.
+The rule: **the interface is the test surface.** Every TypeScript service
+is a `Context.Service` with a `make`/`layer` pair and no service reaches
+outside its injected deps — so each one runs under `@effect/vitest`
+(`it.effect`, plus `effect/testing/TestClock` wherever timing matters:
+debounce, backoff, connectivity cadence) with no Tauri, no React, and no
+other service running. Side effects hide behind seams (`core/effects.ts`'s
+`Notifier`/`Clipboard`/`Tray`/`Connectivity`, the `Deployer`) whose test
+layers make each seam real without touching the OS.
 
 - **Rust** (`cargo test`): SQLite migrations + CRUD, rename-preserves-link,
   ignore rules, event classification/dedup, project import/adoption cores
@@ -393,10 +485,14 @@ test adapters make each seam real.
   generator is build-time tooling in `folder_icons/generator.rs`
   (`cargo test generate_folder_icons -- --ignored`).
 - **TypeScript** (`pnpm test`): detection matrix, state-machine legality +
-  monotonic advance, error explanations, queue integration (debounce under
-  fake timers, coalescing, retries, cancellation) against a scriptable mock
-  deployer — plus the reconciler (rename vs delete+add, adoption,
-  copy-in-progress), account session (single-flight refresh, CLI fallback,
-  switch detection/resolution), held-changes (overlapping holds,
-  exactly-once drain, persistence), the REST deploy protocol
-  (missing_files loop, abort → remote cancel), and connectivity policy.
+  monotonic advance, error explanations, the typed `Ipc` boundary (Rust
+  error kinds → tagged errors), the `DeployQueue` (debounce under
+  `TestClock`, coalescing, retries, cancellation reaching the deployer's
+  `handle.cancel`, scope teardown leaking no fibers) against a scriptable
+  mock deployer, the reconciler (rename vs delete+add, adoption,
+  copy-in-progress), the watch stream (batch atomicity, serial delivery,
+  scope-close unregistering the listener), account session (single-flight
+  refresh via `Deferred`, CLI fallback, typed error cascade, switch
+  detection/resolution), held-changes (overlapping holds, exactly-once
+  drain, persistence), the REST deploy protocol (missing_files loop, abort
+  → remote cancel), and connectivity policy.

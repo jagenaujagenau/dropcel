@@ -59,6 +59,12 @@ branch lock is violated. Manual deploys always bypass gates.
 _Avoid_: using "guard" and "gate" interchangeably — guards compare content,
 gates inspect repository state.
 
+**AutoDeployGate**:
+The module owning the Gate: the account-switch/git-operation branching, the
+held-changes marking, and the 15s timer that re-checks a project stuck
+mid-git-operation until it clears (or the project vanishes). Its one entry
+point, `notifyChangeGitGated`, hides all of that from callers.
+
 **Hold**:
 A named reason a project's auto-deploys are suspended: `offline`,
 `account-switch`, or `git-operation`. Holds accumulate changes instead of
@@ -97,13 +103,21 @@ The stable alias URL users share (custom domain > project alias), as opposed
 to the per-deployment `dpl_…` URL.
 _Avoid_: deployment URL when the shareable one is meant
 
+**ReadyEffects**:
+The module (`core/ready-effects.ts`) owning what a **Deployment** does once
+it reaches a terminal state: persist the transition, and — on ready —
+resolve the **Public URL**, persist it, capture a dashboard snapshot, copy
+it to the clipboard, and notify. Two entry points (`onTransition`,
+`onReady`) hide that whole ordering, the same way **Reconciler** exposes
+`reconcile`/`handleFsChanges` instead of every internal step.
+
 ## Relationships
 
 - The **Reconciler** turns fs events into **Project** changes and asks the **Queue** to deploy.
-- The **Queue** consults the **Guard**, and the orchestrator's **Gate**, before an auto **Deployment**.
+- The **Queue** consults the **Guard**, and **AutoDeployGate** consults the **Gate**, before an auto **Deployment**.
 - Any **Hold** routes a project's changes into **Held changes**; releasing the last hold **drains** it.
 - The **Account session** raises **Account switch**, which places an `account-switch` **Hold** on every project.
-- A **Deployment** that reaches ready resolves the **Public URL** and refreshes the effects seams (tray, notification, clipboard).
+- A **Deployment** that reaches ready is handed to **ReadyEffects**, which resolves the **Public URL** and refreshes the effects seams (tray, notification, clipboard).
 
 ## Example dialogue
 

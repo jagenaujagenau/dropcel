@@ -195,6 +195,29 @@ pub fn get_snapshot(app: AppHandle, project_id: String) -> AppResult<Option<Snap
     encode(&path).map(Some)
 }
 
+/// Same as `get_snapshot`, batched: startup hydration otherwise costs one
+/// IPC round trip per project. A missing/unreadable snapshot for one project
+/// is simply absent from the map — it never fails the whole batch.
+#[tauri::command]
+pub fn get_snapshots_batch(
+    app: AppHandle,
+    project_ids: Vec<String>,
+) -> AppResult<std::collections::HashMap<String, Snapshot>> {
+    let mut out = std::collections::HashMap::with_capacity(project_ids.len());
+    for project_id in project_ids {
+        let Ok(path) = snapshot_path(&app, &project_id) else {
+            continue;
+        };
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(snap) = encode(&path) {
+            out.insert(project_id, snap);
+        }
+    }
+    Ok(out)
+}
+
 /// Drop a project's snapshot (called when the project is forgotten).
 #[tauri::command]
 pub fn delete_snapshot(app: AppHandle, project_id: String) -> AppResult<()> {

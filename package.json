@@ -9,14 +9,15 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@effect/platform": "^0.97.0",
+    "@effect/atom-react": "4.0.0-beta.101",
     "@fontsource/geist-mono": "^5.3.0",
     "@fontsource/geist-sans": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@tanstack/react-query": "^5.101.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
@@ -26,20 +27,22 @@
     "@tauri-apps/plugin-opener": "^2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "effect": "^3.22.0",
+    "effect": "4.0.0-beta.101",
     "lucide-react": "^1.25.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.3.3",
-    "zustand": "^5.0.14"
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@effect/vitest": "4.0.0-beta.101",
+    "@oxlint/plugins": "1.75.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.1.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "oxlint": "1.75.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.10"

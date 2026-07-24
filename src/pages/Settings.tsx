@@ -1,20 +1,38 @@
 import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { FileText, Loader2, LogOut, Triangle } from "lucide-react";
+import { FileText, Loader2, LogOut, Monitor, Moon, Sun, Triangle } from "lucide-react";
 import { UserAvatar } from "../components/UserAvatar";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
+import { describeAuthError } from "../core/account-session";
 import { signOut } from "../core/auth";
 import { getLogPath } from "../lib/log";
-import { orchestrator } from "../core/orchestrator";
-import { FRAMEWORK_LABELS, type Framework } from "../core/types";
+import {
+  accountStateAtom,
+  authErrorAtom,
+  latestDeploymentAtom,
+  presentOnDiskAtom,
+  projectsAtom,
+  purgeProject,
+  reconcile,
+  refreshAuth,
+  rootFolderAtom,
+  setRootFolderLocal,
+  setThemeLocal,
+  setWatchPausedLocal,
+  themeAtom,
+  useAtomState,
+  watchPausedAtom,
+} from "../core/atoms";
+import { FRAMEWORK_LABELS, type Framework, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
-import { timeAgo } from "../lib/utils";
-import { useAppStore } from "../store/app";
+import type { Theme } from "../lib/theme";
+import { cn, timeAgo } from "../lib/utils";
 
 /**
  * Projects whose folder left ~/Vercel. Their history is kept (put the folder
@@ -22,9 +40,8 @@ import { useAppStore } from "../store/app";
  * Clearing is local-only — the remote Vercel project is never touched.
  */
 function RemovedProjects() {
-  const projects = useAppStore((s) => s.projects);
-  const presentOnDisk = useAppStore((s) => s.presentOnDisk);
-  const latestByProject = useAppStore((s) => s.latestByProject);
+  const projects = useAtomState(projectsAtom, []);
+  const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
   const ghosts = projects.filter((p) => !presentOnDisk.has(p.name));
 
   if (ghosts.length === 0) return null;
@@ -35,35 +52,54 @@ function RemovedProjects() {
       description="No longer in the folder. History kept until cleared; nothing on Vercel is touched."
     >
       <div className="space-y-2">
-        {ghosts.map((p) => {
-          const latest = latestByProject[p.id];
-          return (
-            <div key={p.id} className="flex items-center gap-3 text-xs">
-              <div className="min-w-0 flex-1">
-                <p className="truncate">{p.name}</p>
-                <p className="text-[11px] text-faint">
-                  {FRAMEWORK_LABELS[p.framework as Framework] ?? p.framework}
-                  {latest ? ` · last deployed ${timeAgo(latest.startedAt)}` : " · never deployed"}
-                </p>
-              </div>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => void orchestrator.purgeProject(p.id)}
-              >
-                Clear History
-              </Button>
-            </div>
-          );
-        })}
+        {ghosts.map((p) => (
+          <GhostRow key={p.id} project={p} />
+        ))}
       </div>
     </Section>
   );
 }
 
+/** One removed project's row — reads its own deployment slice via
+ * `latestDeploymentAtom` so a deploy elsewhere never re-renders this row. */
+function GhostRow({ project: p }: { project: Project }) {
+  const latest = useAtomValue(latestDeploymentAtom(p.id));
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      <div className="min-w-0 flex-1">
+        <p className="truncate">{p.name}</p>
+        <p className="text-[11px] text-faint">
+          {FRAMEWORK_LABELS[p.framework as Framework] ?? p.framework}
+          {latest ? ` · last deployed ${timeAgo(latest.startedAt)}` : " · never deployed"}
+        </p>
+      </div>
+      <Button
+        variant="danger"
+        size="sm"
+        onClick={() =>
+          void (async () => {
+            const yes = await ask(
+              `Clear "${p.name}"'s deploy history?\n\nRemoves it from Dropcel. Nothing on Vercel is touched.`,
+              { title: "Clear History", kind: "warning" },
+            );
+            if (yes) await purgeProject(p.id);
+          })()
+        }
+      >
+        Clear History
+      </Button>
+    </div>
+  );
+}
+
 /** Signed in: identity + sign out. No token input — it's already done. */
 function SignedIn() {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   return (
     <div className="flex items-center gap-3">
       <UserAvatar size={28} />
@@ -76,7 +112,7 @@ function SignedIn() {
         size="sm"
         onClick={async () => {
           await signOut();
-          await orchestrator.refreshAuth();
+          await refreshAuth();
         }}
       >
         <LogOut className="h-3.5 w-3.5" /> Sign Out
@@ -90,13 +126,15 @@ function SignedOut() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const authError = useAtomState(authErrorAtom, null);
+  const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
     try {
       await ipc.credentials.setToken(token);
       setToken("");
-      await orchestrator.refreshAuth();
+      await refreshAuth();
     } finally {
       setSaving(false);
     }
@@ -104,6 +142,7 @@ function SignedOut() {
 
   return (
     <div className="space-y-3">
+      {authErrorMessage && <p className="text-[11px] text-danger">{authErrorMessage}</p>}
       {signIn ? (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted" />
@@ -178,6 +217,40 @@ function LogsRow() {
   );
 }
 
+const THEME_OPTIONS: { value: Theme; label: string; icon: typeof Monitor }[] = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+];
+
+function ThemeToggle() {
+  const theme = useAtomState(themeAtom, "system");
+  const choose = (value: Theme) => {
+    setThemeLocal(value);
+    void ipc.db.setSetting("theme", value);
+  };
+  return (
+    <div className="flex rounded-md border border-border p-0.5">
+      {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          onClick={() => choose(value)}
+          title={label}
+          className={cn(
+            "flex items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-xs transition-colors",
+            theme === value
+              ? "bg-surface-hover text-foreground"
+              : "text-faint hover:text-muted",
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Section({
   title,
   description,
@@ -197,11 +270,16 @@ function Section({
 }
 
 export function Settings() {
-  const rootFolder = useAppStore((s) => s.rootFolder);
-  const watchPaused = useAppStore((s) => s.watchPaused);
-  const authedAs = useAppStore((s) => s.authedAs);
-  const setRootFolder = useAppStore((s) => s.setRootFolder);
-  const setWatchPaused = useAppStore((s) => s.setWatchPaused);
+  const rootFolder = useAtomState(rootFolderAtom, "");
+  const watchPaused = useAtomState(watchPausedAtom, false);
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
+  const setRootFolder = setRootFolderLocal;
+  const setWatchPaused = setWatchPausedLocal;
 
   const [autostart, setAutostart] = useState(false);
   const [copyOnReady, setCopyOnReady] = useState(true);
@@ -220,6 +298,16 @@ export function Settings() {
         <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
       </div>
 
+      <Section title="Appearance">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs">Theme</p>
+            <p className="text-[11px] text-faint">Overrides the OS preference.</p>
+          </div>
+          <ThemeToggle />
+        </div>
+      </Section>
+
       <Section
         title="Sync Folder"
         description="Everything in this folder deploys automatically."
@@ -234,7 +322,7 @@ export function Settings() {
               if (typeof dir === "string") {
                 await ipc.fs.setRootFolder(dir);
                 setRootFolder(dir);
-                await orchestrator.reconcile(false);
+                await reconcile(false);
               }
             }}
           >

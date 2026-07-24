@@ -88,6 +88,7 @@ pub fn run() {
             screenshot::snapshot_support,
             screenshot::capture_snapshot,
             screenshot::get_snapshot,
+            screenshot::get_snapshots_batch,
             screenshot::delete_snapshot,
             // git
             git::git_info,

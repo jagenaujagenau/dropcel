@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 import type { ScannedProject } from "../lib/ipc";
-import { Reconciler, type ReconcilerDeps } from "./reconciler";
+import { layerFrom, type RawIpc } from "./ipc";
+import { make, Reconciler, type ReconcilerDeps } from "./reconciler";
 import type { Project } from "./types";
 
 /**
@@ -238,5 +240,66 @@ describe("Reconciler", () => {
     await h.reconciler.handleFsChanges([{ project: "blog", kind: "project-added" }]);
     expect(h.adoptions).toBe(0);
     expect(h.needsDeploy).toEqual([]);
+  });
+});
+
+// ---- Effect facade ---------------------------------------------------------
+
+describe("ReconcilerService", () => {
+  it("is constructible from the Ipc service and runs a reconcile", async () => {
+    const db: Project[] = [];
+    let seq = 0;
+    const needsDeploy: string[] = [];
+    const raw = {
+      db: {
+        listProjects: async () => db.map((p) => ({ ...p })),
+        upsertProject: async (name: string, path: string, framework: string) => {
+          const project = makeProject({
+            id: `id-${++seq}`,
+            name,
+            path,
+            framework: framework as Project["framework"],
+          });
+          db.push(project);
+          return { ...project };
+        },
+        renameProject: async () => {},
+        setProjectLink: async () => {},
+        setProjectFramework: async () => {},
+      },
+      fs: {
+        adoptLooseFiles: async () => [],
+        scanProjects: async () => [scanned("blog")],
+        readProjectFile: async () => null,
+        listProjectEntries: async () => ["index.html"],
+      },
+      files: {},
+      git: {},
+      network: {},
+      snapshots: {},
+      credentials: {},
+      tray: {},
+    };
+
+    let storeProjects: Project[] = [];
+    const program = Effect.gen(function* () {
+      const service = yield* make({
+        setProjects: (projects) => (storeProjects = projects),
+        setPresentOnDisk: () => {},
+        getProjects: () => storeProjects,
+        isWatchPaused: () => false,
+        onProjectNeedsDeploy: (id) => needsDeploy.push(id),
+        onProjectPresent: () => {},
+        onProjectGone: () => {},
+        onReconciled: async () => {},
+      });
+      yield* service.reconcile(true);
+    });
+
+    await Effect.runPromise(
+      program.pipe(Effect.provide(layerFrom(raw as unknown as RawIpc))),
+    );
+    expect(storeProjects.map((p) => p.name)).toEqual(["blog"]);
+    expect(needsDeploy).toEqual(["id-1"]);
   });
 });

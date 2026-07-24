@@ -1,17 +1,21 @@
 import { useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ExternalLink, Trash2, Triangle } from "lucide-react";
+import { ExternalLink, FileText, Lock, Trash2, Triangle, Users } from "lucide-react";
 import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment-actions";
-import { orchestrator } from "../core/orchestrator";
+import { deployProject, latestDeploymentAtom, reconcile } from "../core/atoms";
 import { publicUrlOf, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
-import { useAppStore } from "../store/app";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuState } from "./ui/context-menu";
 import { Dialog } from "./ui/dialog";
 import { Input } from "./ui/input";
+import { Toast } from "./ui/toast";
+import { LockBranchDialog } from "./LockBranchDialog";
+import { LogViewerDialog } from "./LogViewerDialog";
+import { TeamDialog } from "./TeamDialog";
 
 export type ProjectMenuState = ContextMenuState & { project: Project };
 
@@ -27,10 +31,12 @@ export function ProjectContextMenu({
   menu: ProjectMenuState;
   onClose: () => void;
 }) {
-  const latestByProject = useAppStore((s) => s.latestByProject);
   const [note, setNote] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(true);
   const [remoteDeleteOpen, setRemoteDeleteOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [lockBranchOpen, setLockBranchOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
   // True while an async action may still need to show a toast; keeps this
   // component mounted after the menu itself has closed.
   const pendingRef = useRef(false);
@@ -40,7 +46,7 @@ export function ProjectContextMenu({
     if (!pendingRef.current) onClose();
   };
 
-  const latest = latestByProject[menu.project.id];
+  const latest = useAtomValue(latestDeploymentAtom(menu.project.id));
   const publicUrl = publicUrlOf(latest);
 
   const openInVercel = async () => {
@@ -81,7 +87,17 @@ export function ProjectContextMenu({
           {
             label: "Copy URL",
             disabled: !publicUrl,
-            onSelect: () => void writeText(publicUrl!),
+            onSelect: () => {
+              pendingRef.current = true;
+              void writeText(publicUrl!).then(() => {
+                setNote("Copied to clipboard.");
+                setTimeout(() => {
+                  setNote(null);
+                  pendingRef.current = false;
+                  onClose();
+                }, 1500);
+              });
+            },
           },
           {
             label: "View Source",
@@ -89,12 +105,39 @@ export function ProjectContextMenu({
             onSelect: () => void ipc.fs.openRootFolder(menu.project.name),
           },
           {
+            label: "View Build Log",
+            icon: <FileText className="h-4 w-4" />,
+            disabled: !latest,
+            onSelect: () => {
+              pendingRef.current = true;
+              setLogsOpen(true);
+            },
+          },
+          {
             label: "Redeploy",
-            onSelect: () => orchestrator.deployProject(menu.project.id, "production"),
+            onSelect: () => deployProject(menu.project.id, "production"),
           },
           {
             label: "Deploy Preview",
-            onSelect: () => orchestrator.deployProject(menu.project.id, "preview"),
+            onSelect: () => deployProject(menu.project.id, "preview"),
+          },
+          {
+            label: menu.project.lockedBranch
+              ? `Locked to ${menu.project.lockedBranch}…`
+              : "Lock to Branch…",
+            icon: <Lock className="h-3.5 w-3.5" />,
+            onSelect: () => {
+              pendingRef.current = true;
+              setLockBranchOpen(true);
+            },
+          },
+          {
+            label: "Deploy Under…",
+            icon: <Users className="h-3.5 w-3.5" />,
+            onSelect: () => {
+              pendingRef.current = true;
+              setTeamOpen(true);
+            },
           },
           {
             label: "Move to Trash…",
@@ -110,7 +153,7 @@ export function ProjectContextMenu({
                 if (yes) {
                   try {
                     await ipc.fs.trashProject(menu.project.name);
-                    await orchestrator.reconcile(false);
+                    await reconcile(false);
                   } catch (e) {
                     setNote(String((e as { message?: string })?.message ?? e));
                     setTimeout(() => setNote(null), 6000);
@@ -141,11 +184,38 @@ export function ProjectContextMenu({
           }}
         />
       )}
-      {note && (
-        <div className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed shadow-2xl">
-          {note}
-        </div>
+      {logsOpen && latest && (
+        <LogViewerDialog
+          deploymentId={latest.id}
+          projectName={menu.project.name}
+          onClose={() => {
+            setLogsOpen(false);
+            pendingRef.current = false;
+            onClose();
+          }}
+        />
       )}
+      {lockBranchOpen && (
+        <LockBranchDialog
+          project={menu.project}
+          onDone={() => {
+            setLockBranchOpen(false);
+            pendingRef.current = false;
+            onClose();
+          }}
+        />
+      )}
+      {teamOpen && (
+        <TeamDialog
+          project={menu.project}
+          onDone={() => {
+            setTeamOpen(false);
+            pendingRef.current = false;
+            onClose();
+          }}
+        />
+      )}
+      <Toast message={note} style={{ zIndex: 60 }} />
     </>
   );
 }

@@ -162,6 +162,9 @@ export const snapshots = {
   capture: (projectId: string, url: string) =>
     invoke<Snapshot>("capture_snapshot", { projectId, url }),
   get: (projectId: string) => invoke<Snapshot | null>("get_snapshot", { projectId }),
+  /** One IPC round trip for N projects — see composition.ts's startup hydration. */
+  getBatch: (projectIds: string[]) =>
+    invoke<Record<string, Snapshot>>("get_snapshots_batch", { projectIds }),
   delete: (projectId: string) => invoke<void>("delete_snapshot", { projectId }),
 };
 

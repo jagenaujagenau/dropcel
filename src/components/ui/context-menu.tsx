@@ -53,11 +53,11 @@ export function ContextMenu({
       <div
         ref={ref}
         style={{ left: pos.x, top: pos.y }}
-        className="fixed min-w-[220px] rounded-xl border border-border bg-surface p-1.5 shadow-2xl"
+        className="menu-in fixed min-w-[220px] rounded-xl border border-border bg-surface p-1.5 shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {items.map((item, i) => (
-          <div key={i}>
+        {items.map((item) => (
+          <div key={item.label}>
             {item.separatorBefore && <div className="mx-1 my-1.5 h-px bg-border" />}
             <button
               disabled={item.disabled}
