@@ -10,16 +10,17 @@ import {
   LayoutGrid,
   List,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { ProjectContextMenu, type ProjectMenuState } from "../components/ProjectContextMenu";
 import {
-  gitByProjectAtom,
-  latestByProjectAtom,
+  gitStatusAtom,
+  latestDeploymentAtom,
   presentOnDiskAtom,
+  projectSnapshotAtom,
   projectsAtom,
   reconcile,
   rootFolderAtom,
   setProjectsLocal,
-  snapshotByProjectAtom,
   useAtomState,
 } from "../core/atoms";
 import { SitePreview } from "../components/SitePreview";
@@ -179,7 +180,7 @@ function AutoSwitch({ project }: { project: Project }) {
 }
 
 function GitBadge({ project }: { project: Project }) {
-  const git = useAtomState(gitByProjectAtom, {})[project.id];
+  const git = useAtomValue(gitStatusAtom(project.id));
   if (!git?.isRepo || !git.branch) return null;
   return (
     <Badge variant={git.operation ? "warning" : "neutral"}>
@@ -198,7 +199,7 @@ function ProjectCard({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAtomState(latestByProjectAtom, {})[project.id];
+  const latest = useAtomValue(latestDeploymentAtom(project.id));
   const url = publicUrlOf(latest);
 
   return (
@@ -288,8 +289,8 @@ function TableRow({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAtomState(latestByProjectAtom, {})[project.id];
-  const snapshot = useAtomState(snapshotByProjectAtom, {})[project.id];
+  const latest = useAtomValue(latestDeploymentAtom(project.id));
+  const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const url = publicUrlOf(latest);
   const failed = latest?.state === "failed" && latest.error;
 

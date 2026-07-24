@@ -10,6 +10,7 @@ export function UserAvatar({ size = 16 }: { size?: number }) {
     username: null,
     avatarUrl: null,
     pendingSwitch: null,
+    lastAuthError: null,
   });
   const authedAs = accountState.username;
   const avatarUrl = accountState.avatarUrl;

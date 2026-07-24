@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AccountSessionService, type AccountSessionShape } from "./account-session";
+import { AccountSessionService, type AccountSessionShape, type AccountState } from "./account-session";
 import { AppState, make as appStateMake, type AppStateShape } from "./app-state";
 import { Clipboard, Connectivity, Notifier, Tray } from "./effects";
 import { layerFrom, type RawIpc } from "./ipc";
@@ -137,14 +137,11 @@ function makeHarness(overrides: { db?: Partial<Record<string, unknown>> } = {}):
   const accountSessionLayer = Layer.effect(
     AccountSessionService,
     Effect.gen(function* () {
-      const state = yield* SubscriptionRef.make<{
-        username: string | null;
-        avatarUrl: string | null;
-        pendingSwitch: { from: string; to: string } | null;
-      }>({
+      const state = yield* SubscriptionRef.make<AccountState>({
         username: null,
         avatarUrl: null,
         pendingSwitch: null,
+        lastAuthError: null,
       });
       const shape: AccountSessionShape = {
         state,

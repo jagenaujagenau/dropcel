@@ -1,5 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import { Globe } from "lucide-react";
-import { snapshotByProjectAtom, useAtomState } from "../core/atoms";
+import { projectSnapshotAtom } from "../core/atoms";
 import { cn } from "../lib/utils";
 
 /**
@@ -18,7 +19,7 @@ export function SitePreview({
   hasDeployment: boolean;
   className?: string;
 }) {
-  const snapshot = useAtomState(snapshotByProjectAtom, {})[projectId];
+  const snapshot = useAtomValue(projectSnapshotAtom(projectId));
 
   return (
     <div

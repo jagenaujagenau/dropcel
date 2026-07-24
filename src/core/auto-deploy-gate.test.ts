@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { AccountSessionService, type AccountSessionShape } from "./account-session";
+import { AccountSessionService, type AccountSessionShape, type AccountState } from "./account-session";
 import { AppState, make as appStateMake, type AppStateShape } from "./app-state";
 import { AutoDeployGate, layer as autoDeployGateLayer } from "./auto-deploy-gate";
 import { make as heldChangesMake, HeldChangesService } from "./held-changes";
@@ -91,10 +91,11 @@ function makeHarness(): Harness {
   const accountSessionLayer = Layer.effect(
     AccountSessionService,
     Effect.gen(function* () {
-      const state = yield* SubscriptionRef.make({
-        username: null as string | null,
-        avatarUrl: null as string | null,
-        pendingSwitch: null as { from: string; to: string } | null,
+      const state = yield* SubscriptionRef.make<AccountState>({
+        username: null,
+        avatarUrl: null,
+        pendingSwitch: null,
+        lastAuthError: null,
       });
       // Poll `pendingSwitch` into the ref on every read via a getter-shaped
       // SubscriptionRef isn't possible directly, so the test drives it with
@@ -110,11 +111,7 @@ function makeHarness(): Harness {
       return AccountSessionService.of(shape);
     }),
   );
-  let accountStateRef: SubscriptionRef.SubscriptionRef<{
-    username: string | null;
-    avatarUrl: string | null;
-    pendingSwitch: { from: string; to: string } | null;
-  }> | null = null;
+  let accountStateRef: SubscriptionRef.SubscriptionRef<AccountState> | null = null;
 
   // Shared deps also exposed directly in the harness's output type (not just
   // provided to `AutoDeployGate`) so tests can `yield* HeldChangesService`

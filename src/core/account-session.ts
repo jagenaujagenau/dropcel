@@ -115,6 +115,28 @@ export interface AccountState {
   username: string | null;
   avatarUrl: string | null;
   pendingSwitch: AccountSwitch | null;
+  /** The typed failure from the most recent `acquireToken` cascade, cleared
+   * the next time a token is actually acquired. `NoSession` lands here too
+   * (it's still a cascade outcome) — UI callers treat it as "not signed in
+   * yet" rather than a failure worth surfacing; see `describeAuthError`. */
+  lastAuthError: TokenError | null;
+}
+
+/** Plain-language message for a `TokenError`, or `null` for `NoSession`
+ * (not signed in yet is not a failure worth surfacing). Shared by every
+ * screen with a sign-in affordance (Settings, Onboarding) so the four cases
+ * read the same way everywhere. */
+export function describeAuthError(error: TokenError): string | null {
+  switch (error._tag) {
+    case "TokenExpired":
+      return "Your session expired — sign in again.";
+    case "TokenRevoked":
+      return "Your access was revoked — paste a new token.";
+    case "NetworkDown":
+      return "Couldn't reach Vercel — check your connection.";
+    case "NoSession":
+      return null;
+  }
 }
 
 export interface AccountSessionShape {
@@ -148,6 +170,7 @@ export const make = (deps: AccountSessionDeps) =>
       username: null,
       avatarUrl: null,
       pendingSwitch: null,
+      lastAuthError: null,
     });
 
     const setAuthedAs = (username: string | null, avatarUrl: string | null = null) =>
@@ -184,14 +207,21 @@ export const make = (deps: AccountSessionDeps) =>
       return yield* Effect.fail(new NoSession());
     })();
 
+    const recordAuthError = (error: TokenError) =>
+      SubscriptionRef.update(state, (s) => ({ ...s, lastAuthError: error }));
+
     /** Give up gracefully: hand back the stale token (a 401 will surface as
-     * an actionable error) or null when there is nothing at all. */
+     * an actionable error) or null when there is nothing at all. Records the
+     * typed failure on `state.lastAuthError` right before degrading it to a
+     * string (so the UI can still distinguish the cases), and clears it the
+     * next time the cascade actually produces a token. */
     const degraded: Effect.Effect<string | null> = acquireToken.pipe(
+      Effect.tap(() => SubscriptionRef.update(state, (s) => ({ ...s, lastAuthError: null }))),
       Effect.catchTags({
-        TokenExpired: (e) => Effect.succeed<string | null>(e.staleToken),
-        TokenRevoked: (e) => Effect.succeed(e.staleToken),
-        NetworkDown: (e) => Effect.succeed(e.staleToken),
-        NoSession: () => Effect.succeed(null),
+        TokenExpired: (e) => recordAuthError(e).pipe(Effect.as<string | null>(e.staleToken)),
+        TokenRevoked: (e) => recordAuthError(e).pipe(Effect.as(e.staleToken)),
+        NetworkDown: (e) => recordAuthError(e).pipe(Effect.as(e.staleToken)),
+        NoSession: (e) => recordAuthError(e).pipe(Effect.as(null)),
       }),
     );
 

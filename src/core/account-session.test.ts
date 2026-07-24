@@ -240,6 +240,66 @@ describe("AccountSession.acquireToken (typed failures)", () => {
   );
 });
 
+describe("AccountSession.state.lastAuthError", () => {
+  it.effect("TokenExpired sets lastAuthError", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ getExpiresAt: Effect.sync(() => NOW - 1) });
+      yield* h.session.getToken;
+      const state = yield* SubscriptionRef.get(h.session.state);
+      expect(state.lastAuthError).toBeInstanceOf(TokenExpired);
+    }),
+  );
+
+  it.effect("a refused refresh grant sets TokenRevoked", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        getExpiresAt: Effect.sync(() => NOW - 1),
+        refreshViaOAuth: Effect.sync<RefreshOutcome>(() => ({ ok: false, reason: "rejected" })),
+      });
+      yield* h.session.getToken;
+      const state = yield* SubscriptionRef.get(h.session.state);
+      expect(state.lastAuthError).toBeInstanceOf(TokenRevoked);
+    }),
+  );
+
+  it.effect("an unreachable token endpoint sets NetworkDown", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        getExpiresAt: Effect.sync(() => NOW - 1),
+        refreshViaOAuth: Effect.sync<RefreshOutcome>(() => ({ ok: false, reason: "network" })),
+      });
+      yield* h.session.getToken;
+      const state = yield* SubscriptionRef.get(h.session.state);
+      expect(state.lastAuthError).toBeInstanceOf(NetworkDown);
+    }),
+  );
+
+  it.effect("nothing stored and every fallback fails sets NoSession", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ getStoredToken: Effect.sync(() => null) });
+      yield* h.session.getToken;
+      const state = yield* SubscriptionRef.get(h.session.state);
+      expect(state.lastAuthError).toBeInstanceOf(NoSession);
+    }),
+  );
+
+  it.effect("clears on the next successful getToken", () =>
+    Effect.gen(function* () {
+      let expiresAt = NOW - 1;
+      const h = yield* makeHarness({ getExpiresAt: Effect.sync(() => expiresAt) });
+
+      yield* h.session.getToken;
+      expect((yield* SubscriptionRef.get(h.session.state)).lastAuthError).toBeInstanceOf(
+        TokenExpired,
+      );
+
+      expiresAt = NOW + 60 * MIN; // now comfortably valid — no refresh needed
+      yield* h.session.getToken;
+      expect((yield* SubscriptionRef.get(h.session.state)).lastAuthError).toBeNull();
+    }),
+  );
+});
+
 describe("AccountSession.refreshIdentity", () => {
   it.effect("records identity on first sign-in without raising a switch", () =>
     Effect.gen(function* () {

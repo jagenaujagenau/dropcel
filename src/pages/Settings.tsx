@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -8,11 +9,13 @@ import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
+import { describeAuthError } from "../core/account-session";
 import { signOut } from "../core/auth";
 import { getLogPath } from "../lib/log";
 import {
   accountStateAtom,
-  latestByProjectAtom,
+  authErrorAtom,
+  latestDeploymentAtom,
   presentOnDiskAtom,
   projectsAtom,
   purgeProject,
@@ -24,7 +27,7 @@ import {
   useAtomState,
   watchPausedAtom,
 } from "../core/atoms";
-import { FRAMEWORK_LABELS, type Framework } from "../core/types";
+import { FRAMEWORK_LABELS, type Framework, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { timeAgo } from "../lib/utils";
 
@@ -36,7 +39,6 @@ import { timeAgo } from "../lib/utils";
 function RemovedProjects() {
   const projects = useAtomState(projectsAtom, []);
   const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
-  const latestByProject = useAtomState(latestByProjectAtom, {});
   const ghosts = projects.filter((p) => !presentOnDisk.has(p.name));
 
   if (ghosts.length === 0) return null;
@@ -47,35 +49,42 @@ function RemovedProjects() {
       description="No longer in the folder. History kept until cleared; nothing on Vercel is touched."
     >
       <div className="space-y-2">
-        {ghosts.map((p) => {
-          const latest = latestByProject[p.id];
-          return (
-            <div key={p.id} className="flex items-center gap-3 text-xs">
-              <div className="min-w-0 flex-1">
-                <p className="truncate">{p.name}</p>
-                <p className="text-[11px] text-faint">
-                  {FRAMEWORK_LABELS[p.framework as Framework] ?? p.framework}
-                  {latest ? ` · last deployed ${timeAgo(latest.startedAt)}` : " · never deployed"}
-                </p>
-              </div>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => void purgeProject(p.id)}
-              >
-                Clear History
-              </Button>
-            </div>
-          );
-        })}
+        {ghosts.map((p) => (
+          <GhostRow key={p.id} project={p} />
+        ))}
       </div>
     </Section>
   );
 }
 
+/** One removed project's row — reads its own deployment slice via
+ * `latestDeploymentAtom` so a deploy elsewhere never re-renders this row. */
+function GhostRow({ project: p }: { project: Project }) {
+  const latest = useAtomValue(latestDeploymentAtom(p.id));
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      <div className="min-w-0 flex-1">
+        <p className="truncate">{p.name}</p>
+        <p className="text-[11px] text-faint">
+          {FRAMEWORK_LABELS[p.framework as Framework] ?? p.framework}
+          {latest ? ` · last deployed ${timeAgo(latest.startedAt)}` : " · never deployed"}
+        </p>
+      </div>
+      <Button variant="danger" size="sm" onClick={() => void purgeProject(p.id)}>
+        Clear History
+      </Button>
+    </div>
+  );
+}
+
 /** Signed in: identity + sign out. No token input — it's already done. */
 function SignedIn() {
-  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   return (
     <div className="flex items-center gap-3">
       <UserAvatar size={28} />
@@ -102,6 +111,8 @@ function SignedOut() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const authError = useAtomState(authErrorAtom, null);
+  const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
@@ -116,6 +127,7 @@ function SignedOut() {
 
   return (
     <div className="space-y-3">
+      {authErrorMessage && <p className="text-[11px] text-danger">{authErrorMessage}</p>}
       {signIn ? (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted" />
@@ -211,7 +223,12 @@ function Section({
 export function Settings() {
   const rootFolder = useAtomState(rootFolderAtom, "");
   const watchPaused = useAtomState(watchPausedAtom, false);
-  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   const setRootFolder = setRootFolderLocal;
   const setWatchPaused = setWatchPausedLocal;
 

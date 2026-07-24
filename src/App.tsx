@@ -28,6 +28,7 @@ export default function App() {
     username: null,
     avatarUrl: null,
     pendingSwitch: null,
+    lastAuthError: null,
   });
   const authedAs = accountState.username;
   const accountSwitch = accountState.pendingSwitch;

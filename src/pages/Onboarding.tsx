@@ -4,7 +4,8 @@ import { TriangleField } from "../components/TriangleField";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { accountStateAtom, refreshAuth, rootFolderAtom, useAtomState } from "../core/atoms";
+import { describeAuthError } from "../core/account-session";
+import { accountStateAtom, authErrorAtom, refreshAuth, rootFolderAtom, useAtomState } from "../core/atoms";
 import * as ipc from "../lib/ipc";
 import { cn } from "../lib/utils";
 
@@ -17,7 +18,12 @@ import { cn } from "../lib/utils";
  *     so the product's promise is experienced inside onboarding.
  */
 export function Onboarding({ onDone }: { onDone: () => void }) {
-  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   const [step, setStep] = useState(0);
 
   // Auth resolved itself (CLI import at startup, or sign-in finished
@@ -51,7 +57,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 }
 
 function Welcome({ next }: { next: () => void }) {
-  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
+  const authedAs = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+    lastAuthError: null,
+  }).username;
   return (
     <div className="space-y-4 text-center">
       <TriangleField className="mx-auto h-52 w-full" />
@@ -81,6 +92,8 @@ function Connect() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const authError = useAtomState(authErrorAtom, null);
+  const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
@@ -99,6 +112,10 @@ function Connect() {
         <h2 className="text-lg font-semibold tracking-tight">Connect Vercel</h2>
         <p className="text-xs text-muted">Approve in your browser. That's it.</p>
       </div>
+
+      {authErrorMessage && (
+        <p className="text-center text-[11px] text-danger">{authErrorMessage}</p>
+      )}
 
       {signIn ? (
         <div className="space-y-3 rounded-xl border border-border bg-surface p-4 text-center">

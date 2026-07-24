@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, Trash2, Triangle } from "lucide-react";
 import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment-actions";
-import { deployProject, latestByProjectAtom, reconcile, useAtomState } from "../core/atoms";
+import { deployProject, latestDeploymentAtom, reconcile } from "../core/atoms";
 import { publicUrlOf, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { Button } from "./ui/button";
@@ -26,7 +27,6 @@ export function ProjectContextMenu({
   menu: ProjectMenuState;
   onClose: () => void;
 }) {
-  const latestByProject = useAtomState(latestByProjectAtom, {});
   const [note, setNote] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(true);
   const [remoteDeleteOpen, setRemoteDeleteOpen] = useState(false);
@@ -39,7 +39,7 @@ export function ProjectContextMenu({
     if (!pendingRef.current) onClose();
   };
 
-  const latest = latestByProject[menu.project.id];
+  const latest = useAtomValue(latestDeploymentAtom(menu.project.id));
   const publicUrl = publicUrlOf(latest);
 
   const openInVercel = async () => {
