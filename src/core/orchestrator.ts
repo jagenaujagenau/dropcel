@@ -1,16 +1,14 @@
 import * as ipc from "../lib/ipc";
 import { describeError, log } from "../lib/log";
 import { useAppStore } from "../store/app";
-import { AccountSession, createRealAccountSession } from "./account-session";
+import { createRealAccountSession, type AccountSession } from "./account-session";
 import { createApiDeployer } from "./api-deployer";
 import { checkGitConnection } from "./deployment-actions";
 import {
-  ConnectivityMonitor,
-  createTauriConnectivity,
-  tauriClipboard,
-  TauriNotifier,
-  tauriTray,
+  createTauriEffects,
   type ClipboardPort,
+  type ConnectivityBridge,
+  type NotifierBridge,
   type TrayPort,
 } from "./effects";
 import { shouldHoldAutoDeploy } from "./git";
@@ -54,19 +52,20 @@ function trayStatus(state: string | undefined): ipc.TrayProject["status"] {
 
 export class Orchestrator {
   readonly queue: DeploymentQueue;
-  private readonly notifier: TauriNotifier;
+  private readonly notifier: NotifierBridge;
   private readonly clipboard: ClipboardPort;
   private readonly tray: TrayPort;
-  private readonly connectivity: ConnectivityMonitor;
+  private readonly connectivity: ConnectivityBridge;
   private readonly held: HeldChanges;
   private readonly session: AccountSession;
   private readonly reconciler: Reconciler;
 
   constructor() {
-    this.notifier = new TauriNotifier();
-    this.clipboard = tauriClipboard;
-    this.tray = tauriTray;
-    this.connectivity = createTauriConnectivity();
+    const effects = createTauriEffects();
+    this.notifier = effects.notifier;
+    this.clipboard = effects.clipboard;
+    this.tray = effects.tray;
+    this.connectivity = effects.connectivity;
 
     // Held-while-offline changes survive an app restart.
     this.held = new HeldChanges({

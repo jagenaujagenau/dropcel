@@ -1,6 +1,10 @@
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import type { FsChange, ScannedProject } from "../lib/ipc";
 import { log } from "../lib/log";
 import { detectFramework, isDeployable } from "./detection";
+import { decodeIpcError, Ipc, type IpcError } from "./ipc";
 import { isLegitRename, parseLinkFile } from "./rename";
 import type { Project } from "./types";
 
@@ -179,3 +183,77 @@ export class Reconciler {
     }
   }
 }
+
+// ---- Effect facade ---------------------------------------------------------
+
+/** The store sinks and orchestration callbacks only the composition root can
+ * provide — everything else the reconciler needs comes from Ipc. */
+export type ReconcilerHooks = Pick<
+  ReconcilerDeps,
+  | "setProjects"
+  | "setPresentOnDisk"
+  | "getProjects"
+  | "isWatchPaused"
+  | "onProjectNeedsDeploy"
+  | "onProjectPresent"
+  | "onProjectGone"
+  | "onReconciled"
+>;
+
+export interface ReconcilerShape {
+  readonly reconcile: (deployNew?: boolean) => Effect.Effect<void, IpcError>;
+  readonly handleFsChanges: (changes: FsChange[]) => Effect.Effect<void, IpcError>;
+}
+
+export class ReconcilerService extends Context.Service<
+  ReconcilerService,
+  ReconcilerShape
+>()("dropcel/core/Reconciler") {}
+
+const toPromise =
+  <Args extends unknown[], R>(f: (...args: Args) => Effect.Effect<R, IpcError>) =>
+  (...args: Args): Promise<R> =>
+    Effect.runPromise(f(...args));
+
+/**
+ * Minimal Effect port: the decision logic above is well-tested and stays a
+ * plain class; this facade only feeds it Ipc-backed dependencies from the
+ * context and wraps its entry points, so it is constructible inside a Layer
+ * graph (phase 7 dissolves the plain wiring in the orchestrator).
+ */
+export const make = (hooks: ReconcilerHooks) =>
+  Effect.gen(function* () {
+    const ipc = yield* Ipc;
+    const reconciler = new Reconciler({
+      adoptLooseFiles: toPromise(ipc.fs.adoptLooseFiles),
+      scanProjects: toPromise(ipc.fs.scanProjects),
+      listProjects: toPromise(ipc.db.listProjects),
+      readProjectFile: toPromise(ipc.fs.readProjectFile),
+      listProjectEntries: toPromise(ipc.fs.listProjectEntries),
+      upsertProject: toPromise(ipc.db.upsertProject),
+      renameProject: toPromise(ipc.db.renameProject),
+      setProjectLink: toPromise(ipc.db.setProjectLink),
+      setProjectFramework: toPromise(ipc.db.setProjectFramework),
+      ...hooks,
+    });
+    const reconcile = Effect.fn("Reconciler.reconcile")(function* (deployNew = false) {
+      yield* Effect.tryPromise({
+        try: () => reconciler.reconcile(deployNew),
+        catch: decodeIpcError,
+      });
+    });
+    const handleFsChanges = Effect.fn("Reconciler.handleFsChanges")(function* (
+      changes: FsChange[],
+    ) {
+      yield* Effect.tryPromise({
+        try: () => reconciler.handleFsChanges(changes),
+        catch: decodeIpcError,
+      });
+    });
+    return ReconcilerService.of({ reconcile, handleFsChanges });
+  });
+
+export const layer = (
+  hooks: ReconcilerHooks,
+): Layer.Layer<ReconcilerService, never, Ipc> =>
+  Layer.effect(ReconcilerService, make(hooks));

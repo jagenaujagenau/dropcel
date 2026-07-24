@@ -1,131 +1,181 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConnectivityMonitor, type ConnectivityDeps } from "./effects";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
+import { makeConnectivity, type ConnectivityShape } from "./effects";
 
 /**
  * Tests for the connectivity monitor's policy: instant offline signal,
- * probe as source of truth, 60s online / 10s offline cadence.
+ * probe as source of truth, 60s online / 10s offline cadence — now driven
+ * through the Effect service with the TestClock instead of fake timers.
  */
 
-function makeHarness(overrides: Partial<ConnectivityDeps> = {}) {
-  let probeResult = true;
-  let instant = true;
-  let handlers = { onOffline: () => {}, onOnline: () => {} };
-  const changes: boolean[] = [];
-  const h = {
-    probes: 0,
-    changes,
-    setProbeResult: (v: boolean) => (probeResult = v),
-    setInstant: (v: boolean) => (instant = v),
-    fireOffline: () => handlers.onOffline(),
-    fireOnline: () => handlers.onOnline(),
-    monitor: undefined as unknown as ConnectivityMonitor,
-  };
-  h.monitor = new ConnectivityMonitor({
-    probe: async () => {
-      h.probes += 1;
-      return probeResult;
-    },
-    instantOnline: () => instant,
-    subscribe: (hs) => (handlers = hs),
-    ...overrides,
-  });
-  h.monitor.onChange((online) => changes.push(online));
-  return h;
+interface Harness {
+  monitor: ConnectivityShape;
+  probes: () => number;
+  changes: boolean[];
+  setProbeResult: (v: boolean) => void;
+  setInstant: (v: boolean) => void;
+  fireOffline: () => void;
+  fireOnline: () => void;
 }
 
-describe("ConnectivityMonitor", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("starts optimistic and emits nothing while the probe agrees", async () => {
-    const h = makeHarness();
-    await h.monitor.start();
-    expect(h.probes).toBe(1);
-    expect(h.changes).toEqual([]);
-    expect(h.monitor.isOnline()).toBe(true);
+const makeHarness = (
+  overrides: { onlineIntervalMs?: number; offlineIntervalMs?: number } = {},
+) =>
+  Effect.gen(function* () {
+    const state = { probeResult: true, instant: true, probes: 0 };
+    let handlers = { onOffline: () => {}, onOnline: () => {} };
+    const changes: boolean[] = [];
+    const monitor = yield* makeConnectivity({
+      probe: Effect.sync(() => {
+        state.probes += 1;
+        return state.probeResult;
+      }),
+      instantOnline: () => state.instant,
+      subscribe: (hs) => (handlers = hs),
+      onChange: (online) => changes.push(online),
+      ...overrides,
+    });
+    const h: Harness = {
+      monitor,
+      probes: () => state.probes,
+      changes,
+      setProbeResult: (v) => (state.probeResult = v),
+      setInstant: (v) => (state.instant = v),
+      fireOffline: () => handlers.onOffline(),
+      fireOnline: () => handlers.onOnline(),
+    };
+    return h;
   });
 
-  it("re-probes every 60s while online", async () => {
-    const h = makeHarness();
-    await h.monitor.start();
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(h.probes).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(h.probes).toBe(2);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(h.probes).toBe(3);
-  });
+/** Let the run fiber react to signals/wakeups before asserting. */
+const settle = Effect.gen(function* () {
+  for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+});
 
-  it("tightens the cadence to 10s while offline and recovers", async () => {
-    const h = makeHarness();
-    h.setProbeResult(false);
-    await h.monitor.start();
-    expect(h.changes).toEqual([false]);
-    // Offline: 10s probes, not 60s.
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.probes).toBe(2);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.probes).toBe(3);
-    // Connection returns → next probe flips us online, cadence relaxes.
-    h.setProbeResult(true);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.changes).toEqual([false, true]);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.probes).toBe(4); // no 10s probe anymore
-    await vi.advanceTimersByTimeAsync(50_000);
-    expect(h.probes).toBe(5);
-  });
+const isOnline = (h: Harness) => SubscriptionRef.get(h.monitor.online);
 
-  it("the instant offline event flips state without waiting for a probe", async () => {
-    const h = makeHarness();
-    await h.monitor.start();
-    h.fireOffline();
-    expect(h.changes).toEqual([false]);
-    expect(h.monitor.isOnline()).toBe(false);
-  });
+describe("Connectivity", () => {
+  it.effect("starts optimistic and emits nothing while the probe agrees", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.monitor.start;
+      expect(h.probes()).toBe(1);
+      expect(h.changes).toEqual([]);
+      expect(yield* isOnline(h)).toBe(true);
+    }),
+  );
 
-  it("the instant online event triggers a probe as source of truth", async () => {
-    const h = makeHarness();
-    await h.monitor.start();
-    h.fireOffline();
-    // navigator says online again — but only the probe decides.
-    h.setProbeResult(false);
-    h.fireOnline();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(h.changes).toEqual([false]); // still offline
-    h.setProbeResult(true);
-    h.fireOnline();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(h.changes).toEqual([false, true]);
-  });
+  it.effect("re-probes every 60s while online", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.monitor.start;
+      yield* TestClock.adjust("59999 millis");
+      yield* settle;
+      expect(h.probes()).toBe(1);
+      yield* TestClock.adjust("1 millis");
+      yield* settle;
+      expect(h.probes()).toBe(2);
+      yield* TestClock.adjust("60 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(3);
+    }),
+  );
 
-  it("skips the probe entirely while navigator reports offline", async () => {
-    const h = makeHarness();
-    h.setInstant(false);
-    await h.monitor.start();
-    expect(h.probes).toBe(0);
-    expect(h.changes).toEqual([false]);
-    // Still offline cadence — re-checks navigator every 10s.
-    h.setInstant(true);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(h.probes).toBe(1);
-    expect(h.changes).toEqual([false, true]);
-  });
+  it.effect("tightens the cadence to 10s while offline and recovers", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.setProbeResult(false);
+      yield* h.monitor.start;
+      expect(h.changes).toEqual([false]);
+      // Offline: 10s probes, not 60s.
+      yield* TestClock.adjust("10 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(2);
+      yield* TestClock.adjust("10 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(3);
+      // Connection returns → next probe flips us online, cadence relaxes.
+      h.setProbeResult(true);
+      yield* TestClock.adjust("10 seconds");
+      yield* settle;
+      expect(h.changes).toEqual([false, true]);
+      yield* TestClock.adjust("10 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(4); // no 10s probe anymore
+      yield* TestClock.adjust("50 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(5);
+    }),
+  );
 
-  it("emits only on change, never on repeats", async () => {
-    const h = makeHarness();
-    h.setProbeResult(false);
-    await h.monitor.start();
-    h.fireOffline();
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(h.changes).toEqual([false]);
-  });
+  it.effect("the instant offline event flips state without waiting for a probe", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.monitor.start;
+      h.fireOffline();
+      yield* settle;
+      expect(h.changes).toEqual([false]);
+      expect(yield* isOnline(h)).toBe(false);
+    }),
+  );
 
-  it("stop() halts the probe loop", async () => {
-    const h = makeHarness();
-    await h.monitor.start();
-    h.monitor.stop();
-    await vi.advanceTimersByTimeAsync(300_000);
-    expect(h.probes).toBe(1);
-  });
+  it.effect("the instant online event triggers a probe as source of truth", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.monitor.start;
+      h.fireOffline();
+      yield* settle;
+      // navigator says online again — but only the probe decides.
+      h.setProbeResult(false);
+      h.fireOnline();
+      yield* settle;
+      expect(h.changes).toEqual([false]); // still offline
+      h.setProbeResult(true);
+      h.fireOnline();
+      yield* settle;
+      expect(h.changes).toEqual([false, true]);
+    }),
+  );
+
+  it.effect("skips the probe entirely while navigator reports offline", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.setInstant(false);
+      yield* h.monitor.start;
+      expect(h.probes()).toBe(0);
+      expect(h.changes).toEqual([false]);
+      // Still offline cadence — re-checks navigator every 10s.
+      h.setInstant(true);
+      yield* TestClock.adjust("10 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(1);
+      expect(h.changes).toEqual([false, true]);
+    }),
+  );
+
+  it.effect("emits only on change, never on repeats", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.setProbeResult(false);
+      yield* h.monitor.start;
+      h.fireOffline();
+      yield* settle;
+      yield* TestClock.adjust("30 seconds");
+      yield* settle;
+      expect(h.changes).toEqual([false]);
+    }),
+  );
+
+  it.effect("stop() halts the probe loop", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.monitor.start;
+      yield* h.monitor.stop;
+      yield* TestClock.adjust("300 seconds");
+      yield* settle;
+      expect(h.probes()).toBe(1);
+    }),
+  );
 });
