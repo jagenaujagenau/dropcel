@@ -10,11 +10,23 @@ import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { signOut } from "../core/auth";
 import { getLogPath } from "../lib/log";
-import { orchestrator } from "../core/orchestrator";
+import {
+  accountStateAtom,
+  latestByProjectAtom,
+  presentOnDiskAtom,
+  projectsAtom,
+  purgeProject,
+  reconcile,
+  refreshAuth,
+  rootFolderAtom,
+  setRootFolderLocal,
+  setWatchPausedLocal,
+  useAtomState,
+  watchPausedAtom,
+} from "../core/atoms";
 import { FRAMEWORK_LABELS, type Framework } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { timeAgo } from "../lib/utils";
-import { useAppStore } from "../store/app";
 
 /**
  * Projects whose folder left ~/Vercel. Their history is kept (put the folder
@@ -22,9 +34,9 @@ import { useAppStore } from "../store/app";
  * Clearing is local-only — the remote Vercel project is never touched.
  */
 function RemovedProjects() {
-  const projects = useAppStore((s) => s.projects);
-  const presentOnDisk = useAppStore((s) => s.presentOnDisk);
-  const latestByProject = useAppStore((s) => s.latestByProject);
+  const projects = useAtomState(projectsAtom, []);
+  const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
+  const latestByProject = useAtomState(latestByProjectAtom, {});
   const ghosts = projects.filter((p) => !presentOnDisk.has(p.name));
 
   if (ghosts.length === 0) return null;
@@ -49,7 +61,7 @@ function RemovedProjects() {
               <Button
                 variant="danger"
                 size="sm"
-                onClick={() => void orchestrator.purgeProject(p.id)}
+                onClick={() => void purgeProject(p.id)}
               >
                 Clear History
               </Button>
@@ -63,7 +75,7 @@ function RemovedProjects() {
 
 /** Signed in: identity + sign out. No token input — it's already done. */
 function SignedIn() {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
   return (
     <div className="flex items-center gap-3">
       <UserAvatar size={28} />
@@ -76,7 +88,7 @@ function SignedIn() {
         size="sm"
         onClick={async () => {
           await signOut();
-          await orchestrator.refreshAuth();
+          await refreshAuth();
         }}
       >
         <LogOut className="h-3.5 w-3.5" /> Sign Out
@@ -96,7 +108,7 @@ function SignedOut() {
     try {
       await ipc.credentials.setToken(token);
       setToken("");
-      await orchestrator.refreshAuth();
+      await refreshAuth();
     } finally {
       setSaving(false);
     }
@@ -197,11 +209,11 @@ function Section({
 }
 
 export function Settings() {
-  const rootFolder = useAppStore((s) => s.rootFolder);
-  const watchPaused = useAppStore((s) => s.watchPaused);
-  const authedAs = useAppStore((s) => s.authedAs);
-  const setRootFolder = useAppStore((s) => s.setRootFolder);
-  const setWatchPaused = useAppStore((s) => s.setWatchPaused);
+  const rootFolder = useAtomState(rootFolderAtom, "");
+  const watchPaused = useAtomState(watchPausedAtom, false);
+  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
+  const setRootFolder = setRootFolderLocal;
+  const setWatchPaused = setWatchPausedLocal;
 
   const [autostart, setAutostart] = useState(false);
   const [copyOnReady, setCopyOnReady] = useState(true);
@@ -234,7 +246,7 @@ export function Settings() {
               if (typeof dir === "string") {
                 await ipc.fs.setRootFolder(dir);
                 setRootFolder(dir);
-                await orchestrator.reconcile(false);
+                await reconcile(false);
               }
             }}
           >

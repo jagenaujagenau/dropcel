@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { startDeviceSignIn, type DeviceSignIn } from "../core/auth";
-import { orchestrator } from "../core/orchestrator";
-import { useAppStore } from "../store/app";
+import { refreshAuth } from "../core/atoms";
 
 /**
  * Shared "Sign in with Vercel" (OAuth device flow) state machine, used by
@@ -29,8 +28,7 @@ export function useDeviceSignIn() {
       setSignIn(null);
       ref.current = null;
       if (result) {
-        useAppStore.getState().setAuthedAs(result.username);
-        void orchestrator.refreshAuth();
+        void refreshAuth();
       } else {
         setFailed(true);
       }

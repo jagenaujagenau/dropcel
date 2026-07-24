@@ -11,14 +11,23 @@ import {
   List,
 } from "lucide-react";
 import { ProjectContextMenu, type ProjectMenuState } from "../components/ProjectContextMenu";
-import { orchestrator } from "../core/orchestrator";
+import {
+  gitByProjectAtom,
+  latestByProjectAtom,
+  presentOnDiskAtom,
+  projectsAtom,
+  reconcile,
+  rootFolderAtom,
+  setProjectsLocal,
+  snapshotByProjectAtom,
+  useAtomState,
+} from "../core/atoms";
 import { SitePreview } from "../components/SitePreview";
 import { TriangleField } from "../components/TriangleField";
 import { StatusLabel } from "../components/StatusIndicator";
 import { FRAMEWORK_LABELS, publicUrlOf, type Framework, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { cn, formatDuration, timeAgo } from "../lib/utils";
-import { useAppStore } from "../store/app";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -33,8 +42,8 @@ import { Switch } from "../components/ui/switch";
 type View = "grid" | "table";
 
 export function Dashboard() {
-  const projects = useAppStore((s) => s.projects);
-  const presentOnDisk = useAppStore((s) => s.presentOnDisk);
+  const projects = useAtomState(projectsAtom, []);
+  const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
   const [menu, setMenu] = useState<ProjectMenuState | null>(null);
   const [view, setView] = useState<View>("grid");
 
@@ -155,7 +164,6 @@ function UrlLine({ url, className }: { url: string; className?: string }) {
 }
 
 function AutoSwitch({ project }: { project: Project }) {
-  const setProjects = useAppStore((s) => s.setProjects);
   return (
     <Switch
       checked={project.autoDeploy}
@@ -164,14 +172,14 @@ function AutoSwitch({ project }: { project: Project }) {
         void ipc.db
           .setAutoDeploy(project.id, v)
           .then(() => ipc.db.listProjects())
-          .then(setProjects);
+          .then(setProjectsLocal);
       }}
     />
   );
 }
 
 function GitBadge({ project }: { project: Project }) {
-  const git = useAppStore((s) => s.gitByProject[project.id]);
+  const git = useAtomState(gitByProjectAtom, {})[project.id];
   if (!git?.isRepo || !git.branch) return null;
   return (
     <Badge variant={git.operation ? "warning" : "neutral"}>
@@ -190,7 +198,7 @@ function ProjectCard({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAppStore((s) => s.latestByProject[project.id]);
+  const latest = useAtomState(latestByProjectAtom, {})[project.id];
   const url = publicUrlOf(latest);
 
   return (
@@ -280,8 +288,8 @@ function TableRow({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAppStore((s) => s.latestByProject[project.id]);
-  const snapshot = useAppStore((s) => s.snapshotByProject[project.id]);
+  const latest = useAtomState(latestByProjectAtom, {})[project.id];
+  const snapshot = useAtomState(snapshotByProjectAtom, {})[project.id];
   const url = publicUrlOf(latest);
   const failed = latest?.state === "failed" && latest.error;
 
@@ -341,7 +349,7 @@ function TableRow({
 }
 
 function EmptyState() {
-  const rootFolder = useAppStore((s) => s.rootFolder);
+  const rootFolder = useAtomState(rootFolderAtom, "");
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
       <TriangleField className="h-56 w-full max-w-md" />
@@ -358,7 +366,7 @@ function EmptyState() {
       </Button>
       <button
         className="text-[11px] text-faint hover:text-muted"
-        onClick={() => void orchestrator.reconcile(true)}
+        onClick={() => void reconcile(true)}
       >
         Rescan folder
       </button>

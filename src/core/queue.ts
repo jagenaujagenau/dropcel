@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import { log } from "../lib/log";
 import type { DeployOutcome, DeployProgress, Deployer, DeployRequest } from "./deployer";
-import { HeldChanges } from "./held-changes";
+import { HeldChanges, type HeldChangesSync } from "./held-changes";
 import { advance, isTerminal } from "./state-machine";
 import type { DeploymentState, DeployTarget } from "./types";
 
@@ -76,8 +76,8 @@ export interface QueueDeps {
    */
   shouldSkipAuto?: (projectId: string) => Promise<boolean>;
   /** Shared hold tracker — the queue owns only its 'offline' reason; other
-   * holds (account switch, git operations) belong to the orchestrator. */
-  held?: HeldChanges;
+   * holds (account switch, git operations) belong to the composition root. */
+  held?: HeldChangesSync;
   debounceMs?: number;
   pipeline?: PipelineOptions;
 }

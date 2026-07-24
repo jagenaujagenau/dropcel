@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { useAppStore } from "../store/app";
+import { accountStateAtom, useAtomState } from "../core/atoms";
 
 /**
  * Vercel profile picture. Fallback chain mirrors Vercel's own dashboard:
  * real photo -> generated gradient identicon (avatar.vercel.sh) -> initial.
  */
 export function UserAvatar({ size = 16 }: { size?: number }) {
-  const authedAs = useAppStore((s) => s.authedAs);
-  const avatarUrl = useAppStore((s) => s.authedAvatarUrl);
+  const accountState = useAtomState(accountStateAtom, {
+    username: null,
+    avatarUrl: null,
+    pendingSwitch: null,
+  });
+  const authedAs = accountState.username;
+  const avatarUrl = accountState.avatarUrl;
   const [failed, setFailed] = useState(0);
 
   const candidates = [

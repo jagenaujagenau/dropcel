@@ -4,10 +4,9 @@ import { TriangleField } from "../components/TriangleField";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { orchestrator } from "../core/orchestrator";
+import { accountStateAtom, refreshAuth, rootFolderAtom, useAtomState } from "../core/atoms";
 import * as ipc from "../lib/ipc";
 import { cn } from "../lib/utils";
-import { useAppStore } from "../store/app";
 
 /**
  * First-run experience, built around two guarantees:
@@ -18,7 +17,7 @@ import { useAppStore } from "../store/app";
  *     so the product's promise is experienced inside onboarding.
  */
 export function Onboarding({ onDone }: { onDone: () => void }) {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
   const [step, setStep] = useState(0);
 
   // Auth resolved itself (CLI import at startup, or sign-in finished
@@ -52,7 +51,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 }
 
 function Welcome({ next }: { next: () => void }) {
-  const authedAs = useAppStore((s) => s.authedAs);
+  const authedAs = useAtomState(accountStateAtom, { username: null, avatarUrl: null, pendingSwitch: null }).username;
   return (
     <div className="space-y-4 text-center">
       <TriangleField className="mx-auto h-52 w-full" />
@@ -88,7 +87,7 @@ function Connect() {
     try {
       await ipc.credentials.setToken(token);
       setToken("");
-      await orchestrator.refreshAuth();
+      await refreshAuth();
     } finally {
       setSaving(false);
     }
@@ -159,7 +158,7 @@ function Connect() {
 }
 
 function Ready({ done }: { done: () => void }) {
-  const rootFolder = useAppStore((s) => s.rootFolder);
+  const rootFolder = useAtomState(rootFolderAtom, "");
   const [deploying, setDeploying] = useState(false);
 
   const deployExample = async () => {

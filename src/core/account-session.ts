@@ -350,7 +350,7 @@ export type AccountSessionHooks = Pick<
   reloadProjects: () => Promise<void>;
 };
 
-const realDeps = (ipc: IpcShape, hooks: AccountSessionHooks): AccountSessionDeps => ({
+export const realDeps = (ipc: IpcShape, hooks: AccountSessionHooks): AccountSessionDeps => ({
   getStoredToken: ipc.credentials.getToken(),
   getExpiresAt: Effect.promise(() => readExpiry()),
   now: () => Date.now(),
@@ -395,6 +395,16 @@ export interface AccountSession {
 }
 
 let active: AccountSession | null = null;
+
+/**
+ * Point `auth.ts`'s `getAuthToken()` (and anything else outside the Layer
+ * graph, e.g. `deployment-actions.ts`) at the one real session the
+ * composition root builds — so there is exactly one token/identity state,
+ * never a second instance racing the first.
+ */
+export function setActiveSession(session: AccountSession): void {
+  active = session;
+}
 
 /**
  * Build the real session (keychain + settings + REST API adapters behind the

@@ -1,0 +1,118 @@
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { GitStatus } from "./git";
+import type { Deployment, Project } from "./types";
+
+/**
+ * UI-facing projection state, Effect-native. Replaces the phase-0..6 zustand
+ * store: every field is a `SubscriptionRef`, written by the reconciler/queue
+ * hooks and read by the render layer through `Atom.runtime.subscriptionRef`.
+ * SQLite remains the source of truth — this is a cache of it.
+ *
+ * Identity (`authedAs`, `accountSwitch`) and connectivity (`online`) are
+ * *not* here — they already live in `AccountSessionService.state` and
+ * `Connectivity.online` (phases 2-3), and the render layer reads those
+ * directly rather than duplicating them.
+ */
+
+export type Route = { name: "dashboard" } | { name: "settings" };
+
+export interface AppStateShape {
+  readonly route: SubscriptionRef.SubscriptionRef<Route>;
+  readonly projects: SubscriptionRef.SubscriptionRef<Project[]>;
+  /** Names of directories currently present inside the root folder. */
+  readonly presentOnDisk: SubscriptionRef.SubscriptionRef<Set<string>>;
+  readonly latestByProject: SubscriptionRef.SubscriptionRef<Record<string, Deployment | undefined>>;
+  readonly deploymentsByProject: SubscriptionRef.SubscriptionRef<Record<string, Deployment[]>>;
+  /** Latest site snapshot (PNG data URL) per project. */
+  readonly snapshotByProject: SubscriptionRef.SubscriptionRef<Record<string, string | undefined>>;
+  /** Git state per project (null when not a repo / unknown). */
+  readonly gitByProject: SubscriptionRef.SubscriptionRef<Record<string, GitStatus | null>>;
+  readonly rootFolder: SubscriptionRef.SubscriptionRef<string>;
+  readonly watchPaused: SubscriptionRef.SubscriptionRef<boolean>;
+  /** null while loading, then whether first-run onboarding is complete. */
+  readonly onboarded: SubscriptionRef.SubscriptionRef<boolean | null>;
+
+  readonly navigate: (route: Route) => Effect.Effect<void>;
+  readonly setProjects: (projects: Project[]) => Effect.Effect<void>;
+  readonly setPresentOnDisk: (names: string[]) => Effect.Effect<void>;
+  readonly upsertDeployment: (d: Deployment) => Effect.Effect<void>;
+  readonly setDeployments: (projectId: string, list: Deployment[]) => Effect.Effect<void>;
+  readonly setSnapshot: (projectId: string, dataUrl: string) => Effect.Effect<void>;
+  readonly setGitInfo: (projectId: string, git: GitStatus | null) => Effect.Effect<void>;
+  readonly setRootFolder: (path: string) => Effect.Effect<void>;
+  readonly setWatchPaused: (paused: boolean) => Effect.Effect<void>;
+  readonly setOnboarded: (onboarded: boolean) => Effect.Effect<void>;
+}
+
+export class AppState extends Context.Service<AppState, AppStateShape>()(
+  "dropcel/core/AppState",
+) {}
+
+export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
+  const route = yield* SubscriptionRef.make<Route>({ name: "dashboard" });
+  const projects = yield* SubscriptionRef.make<Project[]>([]);
+  const presentOnDisk = yield* SubscriptionRef.make<Set<string>>(new Set());
+  const latestByProject = yield* SubscriptionRef.make<Record<string, Deployment | undefined>>({});
+  const deploymentsByProject = yield* SubscriptionRef.make<Record<string, Deployment[]>>({});
+  const snapshotByProject = yield* SubscriptionRef.make<Record<string, string | undefined>>({});
+  const gitByProject = yield* SubscriptionRef.make<Record<string, GitStatus | null>>({});
+  const rootFolder = yield* SubscriptionRef.make("");
+  const watchPaused = yield* SubscriptionRef.make(false);
+  const onboarded = yield* SubscriptionRef.make<boolean | null>(null);
+
+  const upsertDeployment = (d: Deployment) =>
+    Effect.gen(function* () {
+      yield* SubscriptionRef.update(deploymentsByProject, (m) => {
+        const list = m[d.projectId] ?? [];
+        const idx = list.findIndex((x) => x.id === d.id);
+        const next = idx >= 0 ? [...list.slice(0, idx), d, ...list.slice(idx + 1)] : [d, ...list];
+        return { ...m, [d.projectId]: next };
+      });
+      yield* SubscriptionRef.update(latestByProject, (m) => ({ ...m, [d.projectId]: d }));
+    });
+
+  const setDeployments = (projectId: string, list: Deployment[]) =>
+    Effect.gen(function* () {
+      yield* SubscriptionRef.update(deploymentsByProject, (m) => ({ ...m, [projectId]: list }));
+      yield* SubscriptionRef.update(latestByProject, (m) => ({ ...m, [projectId]: list[0] }));
+    });
+
+  return AppState.of({
+    route,
+    projects,
+    presentOnDisk,
+    latestByProject,
+    deploymentsByProject,
+    snapshotByProject,
+    gitByProject,
+    rootFolder,
+    watchPaused,
+    onboarded,
+
+    navigate: (route_) => SubscriptionRef.set(route, route_),
+    setProjects: (projects_) => SubscriptionRef.set(projects, projects_),
+    setPresentOnDisk: (names) => SubscriptionRef.set(presentOnDisk, new Set(names)),
+    upsertDeployment,
+    setDeployments,
+    setSnapshot: (projectId, dataUrl) =>
+      SubscriptionRef.update(snapshotByProject, (m) => ({ ...m, [projectId]: dataUrl })),
+    setGitInfo: (projectId, git) =>
+      SubscriptionRef.update(gitByProject, (m) => ({ ...m, [projectId]: git })),
+    setRootFolder: (path) => SubscriptionRef.set(rootFolder, path),
+    setWatchPaused: (paused) => SubscriptionRef.set(watchPaused, paused),
+    setOnboarded: (onboarded_) => SubscriptionRef.set(onboarded, onboarded_),
+  });
+});
+
+/**
+ * Built once, synchronously (every field is a bare `SubscriptionRef` — no
+ * external dependency), so the composition root can close over the concrete
+ * shape directly wherever a hook needs a synchronous read/write instead of
+ * going through `Context`.
+ */
+export const appStateShape: AppStateShape = Effect.runSync(make);
+
+export const layer: Layer.Layer<AppState> = Layer.succeed(AppState, appStateShape);

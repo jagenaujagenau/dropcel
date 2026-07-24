@@ -4,10 +4,9 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, Trash2, Triangle } from "lucide-react";
 import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment-actions";
-import { orchestrator } from "../core/orchestrator";
+import { deployProject, latestByProjectAtom, reconcile, useAtomState } from "../core/atoms";
 import { publicUrlOf, type Project } from "../core/types";
 import * as ipc from "../lib/ipc";
-import { useAppStore } from "../store/app";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuState } from "./ui/context-menu";
 import { Dialog } from "./ui/dialog";
@@ -27,7 +26,7 @@ export function ProjectContextMenu({
   menu: ProjectMenuState;
   onClose: () => void;
 }) {
-  const latestByProject = useAppStore((s) => s.latestByProject);
+  const latestByProject = useAtomState(latestByProjectAtom, {});
   const [note, setNote] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(true);
   const [remoteDeleteOpen, setRemoteDeleteOpen] = useState(false);
@@ -90,11 +89,11 @@ export function ProjectContextMenu({
           },
           {
             label: "Redeploy",
-            onSelect: () => orchestrator.deployProject(menu.project.id, "production"),
+            onSelect: () => deployProject(menu.project.id, "production"),
           },
           {
             label: "Deploy Preview",
-            onSelect: () => orchestrator.deployProject(menu.project.id, "preview"),
+            onSelect: () => deployProject(menu.project.id, "preview"),
           },
           {
             label: "Move to Trash…",
@@ -110,7 +109,7 @@ export function ProjectContextMenu({
                 if (yes) {
                   try {
                     await ipc.fs.trashProject(menu.project.name);
-                    await orchestrator.reconcile(false);
+                    await reconcile(false);
                   } catch (e) {
                     setNote(String((e as { message?: string })?.message ?? e));
                     setTimeout(() => setNote(null), 6000);

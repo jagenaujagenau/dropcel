@@ -137,7 +137,18 @@ export const layer: Layer.Layer<HeldChangesService, never, Ipc> = Layer.effect(
   }),
 );
 
-// ---- plain-TS bridge (queue + orchestrator are still un-ported) ------------
+// ---- sync facade (queue + composition root need synchronous calls) --------
+
+/** The synchronous surface `DeployQueue` needs — satisfied by `HeldChanges`
+ * below, or by any `Effect.runSync` bridge over a real `HeldChangesService`
+ * built inside the Layer graph. */
+export interface HeldChangesSync {
+  mark(projectId: string, reason: HoldReason): void;
+  release(reason: HoldReason): string[];
+  releaseOne(projectId: string, reason: HoldReason): boolean;
+  isHeld(projectId: string): boolean;
+  heldBy(reason: HoldReason): string[];
+}
 
 export interface HeldChangesDeps {
   /** Persist the offline component; called on every change to it. */
@@ -147,9 +158,9 @@ export interface HeldChangesDeps {
 /**
  * Synchronous facade over the Effect service — every operation is Ref-only,
  * so `runSync` is safe. Keeps the exact pre-Effect surface the queue and
- * orchestrator already use.
+ * composition root already use.
  */
-export class HeldChanges {
+export class HeldChanges implements HeldChangesSync {
   private readonly shape: HeldChangesShape;
 
   constructor(deps: HeldChangesDeps = {}) {

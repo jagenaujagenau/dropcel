@@ -1,6 +1,6 @@
 import { Globe } from "lucide-react";
+import { snapshotByProjectAtom, useAtomState } from "../core/atoms";
 import { cn } from "../lib/utils";
-import { useAppStore } from "../store/app";
 
 /**
  * Deployment snapshot thumbnail. Vercel's dashboard screenshots have no
@@ -18,7 +18,7 @@ export function SitePreview({
   hasDeployment: boolean;
   className?: string;
 }) {
-  const snapshot = useAppStore((s) => s.snapshotByProject[projectId]);
+  const snapshot = useAtomState(snapshotByProjectAtom, {})[projectId];
 
   return (
     <div
