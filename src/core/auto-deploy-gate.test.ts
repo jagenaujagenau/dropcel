@@ -7,7 +7,7 @@ import { AccountSessionService, type AccountSessionShape, type AccountState } fr
 import { AppState, make as appStateMake, type AppStateShape } from "./app-state";
 import { AutoDeployGate, layer as autoDeployGateLayer } from "./auto-deploy-gate";
 import { make as heldChangesMake, HeldChangesService } from "./held-changes";
-import { layerFrom, type RawIpc } from "./ipc";
+import { layerFrom, type Ipc, type RawIpc } from "./ipc";
 import { DeployQueue, type DeployQueueShape } from "./queue";
 import type { Project } from "./types";
 
@@ -35,7 +35,7 @@ function makeProject(overrides: Partial<Project> & { id: string; name: string })
 }
 
 interface Harness {
-  layer: Layer.Layer<AutoDeployGate | HeldChangesService | DeployQueue | AccountSessionService | AppState | import("./ipc").Ipc>;
+  layer: Layer.Layer<AutoDeployGate | HeldChangesService | DeployQueue | AccountSessionService | AppState | Ipc>;
   appState: AppStateShape;
   notifyChangeCalls: string[];
   setGitOperation: (op: string | null) => void;

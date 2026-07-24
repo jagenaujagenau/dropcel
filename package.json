@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -35,11 +37,13 @@
   },
   "devDependencies": {
     "@effect/vitest": "4.0.0-beta.101",
+    "@oxlint/plugins": "1.75.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.1.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "oxlint": "1.75.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.10"

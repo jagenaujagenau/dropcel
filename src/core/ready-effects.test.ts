@@ -85,7 +85,7 @@ function makeHarness(overrides: { db?: Partial<Record<string, unknown>> } = {}):
       setProjectTeam: () => Promise.resolve(),
       setRemoteRepo: () => Promise.resolve(),
       setAutoDeploy: () => Promise.resolve(),
-      ...(overrides.db ?? {}),
+      ...overrides.db,
     },
     fs: {},
     files: { writeProjectLink: () => Promise.resolve() },

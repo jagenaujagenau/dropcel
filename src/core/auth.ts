@@ -85,6 +85,10 @@ export async function startDeviceSignIn(): Promise<DeviceSignIn> {
   const done = (async (): Promise<ImportResult | null> => {
     let interval = authz.intervalMs;
     const deadline = Date.now() + authz.expiresInMs;
+    // `canceled` is mutated by the `cancel()` closure returned below, called
+    // from outside this IIFE (the UI's cancel button) — the linter can't see
+    // across that boundary.
+    // oxlint-disable-next-line eslint/no-unmodified-loop-condition
     while (!canceled && Date.now() < deadline) {
       await sleep(interval);
       if (canceled) return null;

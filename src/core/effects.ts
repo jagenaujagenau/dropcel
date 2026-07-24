@@ -15,6 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { TrayProject } from "../lib/ipc";
+import { describeError, log } from "../lib/log";
 import { Ipc, layer as ipcLayer } from "./ipc";
 
 /**
@@ -51,7 +52,7 @@ export const makeTauriNotifier = Effect.gen(function* () {
         try {
           sendNotification({ title, body });
         } catch (err) {
-          console.error("notification failed", err);
+          log.warn("notification", `send failed: ${describeError(err)}`);
         }
       });
     }),

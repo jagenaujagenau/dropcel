@@ -3,7 +3,7 @@ import { describeError } from "../lib/log";
 import type { DeployOutcome, DeployProgress, Deployer, DeployRequest } from "./deployer";
 import { explainFailure } from "./errors";
 import * as api from "./vercel-api";
-import { missingShas, VercelApiError } from "./vercel-api";
+import { missingShas, type VercelApiError } from "./vercel-api";
 
 /**
  * REST-API implementation of the Deployer interface:

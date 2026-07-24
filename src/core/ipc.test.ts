@@ -53,7 +53,7 @@ const fakeRaw = (overrides: Partial<Record<string, unknown>> = {}): RawIpc =>
       listProjects: () => Promise.resolve([{ id: "p1" }]),
       getSetting: (key: string) => Promise.resolve(`value:${key}`),
       setSetting: () => Promise.reject({ kind: "db", message: "readonly" }),
-      ...((overrides.db as object) ?? {}),
+      ...(overrides.db as object),
     },
     fs: {
       trashProject: () => Promise.reject({ kind: "not-found", message: "gone" }),

@@ -21,6 +21,7 @@ jobs:
           workspaces: src-tauri
       - run: pnpm install
       - run: npx tsc --noEmit
+      - run: npx oxlint
       - run: npx vitest run
       - run: cargo test
         working-directory: src-tauri

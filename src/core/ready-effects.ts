@@ -165,7 +165,7 @@ export const make = (deps: {
       })().pipe(
         Effect.catch((err) =>
           Effect.sync(() => {
-            console.error("clipboard copy failed", err);
+            log.warn("clipboard", `copy failed: ${describeError(err)}`);
             return false;
           }),
         ),
