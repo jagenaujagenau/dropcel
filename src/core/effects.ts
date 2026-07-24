@@ -10,21 +10,18 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { TrayProject } from "../lib/ipc";
 import { describeError, log } from "../lib/log";
-import { Ipc, layer as ipcLayer } from "./ipc";
+import { Ipc } from "./ipc";
 
 /**
- * Effect seams between the orchestrator and the outside world: system
- * notifications, clipboard, tray and connectivity. Each is a Context.Service
- * with a Tauri-backed live layer, so the modules above (orchestrator,
- * reconciler, account session) stay testable with plain fakes. The plain-TS
- * bridges at the bottom keep the (still un-ported) orchestrator's
- * Promise/callback call sites working until phase 7 inverts the root.
+ * Effect seams between the app and the outside world: system notifications,
+ * clipboard, tray and connectivity. Each is a Context.Service with a
+ * Tauri-backed live layer, so the modules that use them (reconciler,
+ * account session, ready-effects) stay testable with plain fakes.
  */
 
 // ---- notifications ---------------------------------------------------------
@@ -238,119 +235,3 @@ export const layerConnectivity = (
       });
     }),
   );
-
-// ---- plain-TS bridges (until phase 7 inverts the composition root) ---------
-
-export interface NotifierBridge {
-  /** Triggers the permission gate (macOS prompts once). */
-  init(): Promise<void>;
-  notify(title: string, body: string): void;
-}
-
-export interface ClipboardPort {
-  write(text: string): Promise<void>;
-}
-
-export interface TrayPort {
-  update(projects: TrayProject[]): Promise<void>;
-}
-
-export interface ConnectivityBridge {
-  onChange(cb: (online: boolean) => void): void;
-  isOnline(): boolean;
-  /** Runs the first probe immediately, then the fiber keeps probing forever. */
-  start(): Promise<void>;
-  stop(): void;
-}
-
-export interface EffectsBridges {
-  notifier: NotifierBridge;
-  clipboard: ClipboardPort;
-  tray: TrayPort;
-  connectivity: ConnectivityBridge;
-}
-
-/**
- * Build the Tauri-backed services once and expose them behind the exact
- * Promise/callback surfaces the plain orchestrator already speaks. The
- * connectivity listeners are wired synchronously through the service's
- * onChange sink, so a first probe that lands offline is never missed.
- */
-export function createTauriEffects(): EffectsBridges {
-  const listeners: ((online: boolean) => void)[] = [];
-  let online = true;
-
-  const runtime = ManagedRuntime.make(
-    Layer.mergeAll(
-      layerNotifier,
-      layerClipboard,
-      layerTray,
-      layerConnectivity({
-        onChange: (value) => {
-          online = value;
-          for (const cb of listeners) cb(value);
-        },
-      }),
-    ).pipe(Layer.provideMerge(ipcLayer)),
-  );
-
-  return {
-    notifier: {
-      init: () =>
-        runtime.runPromise(
-          Effect.gen(function* () {
-            yield* Notifier;
-          }),
-        ),
-      notify: (title, body) => {
-        void runtime
-          .runPromise(
-            Effect.gen(function* () {
-              const notifier = yield* Notifier;
-              yield* notifier.notify(title, body);
-            }),
-          )
-          .catch(() => {});
-      },
-    },
-    clipboard: {
-      write: (text) =>
-        runtime.runPromise(
-          Effect.gen(function* () {
-            const clipboard = yield* Clipboard;
-            yield* clipboard.write(text);
-          }),
-        ),
-    },
-    tray: {
-      update: (projects) =>
-        runtime.runPromise(
-          Effect.gen(function* () {
-            const tray = yield* Tray;
-            yield* tray.update(projects);
-          }),
-        ),
-    },
-    connectivity: {
-      onChange: (cb) => listeners.push(cb),
-      isOnline: () => online,
-      start: () =>
-        runtime.runPromise(
-          Effect.gen(function* () {
-            const connectivity = yield* Connectivity;
-            yield* connectivity.start;
-          }),
-        ),
-      stop: () => {
-        void runtime
-          .runPromise(
-            Effect.gen(function* () {
-              const connectivity = yield* Connectivity;
-              yield* connectivity.stop;
-            }),
-          )
-          .catch(() => {});
-      },
-    },
-  };
-}

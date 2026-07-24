@@ -216,10 +216,10 @@ const toPromise =
     Effect.runPromise(f(...args));
 
 /**
- * Minimal Effect port: the decision logic above is well-tested and stays a
- * plain class; this facade only feeds it Ipc-backed dependencies from the
- * context and wraps its entry points, so it is constructible inside a Layer
- * graph (phase 7 dissolves the plain wiring in the orchestrator).
+ * Effect facade: the decision logic above is well-tested and stays a plain
+ * class; this facade only feeds it Ipc-backed dependencies from the context
+ * and wraps its entry points, so it is constructible inside AppLive's Layer
+ * graph (see composition.ts).
  */
 export const make = (hooks: ReconcilerHooks) =>
   Effect.gen(function* () {

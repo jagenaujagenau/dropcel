@@ -349,9 +349,8 @@ async function drainPersistedDirty(): Promise<void> {
 }
 
 /**
- * Startup sequencing — forked once by `App.tsx`. Auth check, watcher start,
- * initial reconcile, tray refresh: the same order `orchestrator.start()`
- * used, so launch behavior is unchanged.
+ * Startup sequencing — forked once by `App.tsx`: auth check, watcher start,
+ * initial reconcile, tray refresh, in that order.
  */
 async function main(): Promise<void> {
   // Notification permission (macOS prompts once) — mounting Notifier runs it.

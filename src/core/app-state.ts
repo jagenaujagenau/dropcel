@@ -8,15 +8,15 @@ import type { Theme } from "../lib/theme";
 import type { Deployment, Project } from "./types";
 
 /**
- * UI-facing projection state, Effect-native. Replaces the phase-0..6 zustand
- * store: every field is a `SubscriptionRef`, written by the reconciler/queue
- * hooks and read by the render layer through `Atom.runtime.subscriptionRef`.
- * SQLite remains the source of truth — this is a cache of it.
+ * UI-facing projection state, Effect-native: every field is a
+ * `SubscriptionRef`, written by the reconciler/queue hooks and read by the
+ * render layer through `Atom.runtime.subscriptionRef`. SQLite remains the
+ * source of truth — this is a cache of it.
  *
  * Identity (`authedAs`, `accountSwitch`) and connectivity (`online`) are
  * *not* here — they already live in `AccountSessionService.state` and
- * `Connectivity.online` (phases 2-3), and the render layer reads those
- * directly rather than duplicating them.
+ * `Connectivity.online`, and the render layer reads those directly rather
+ * than duplicating them.
  */
 
 export type Route = { name: "dashboard" } | { name: "settings" };

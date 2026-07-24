@@ -95,16 +95,16 @@ one `AppLive: Layer.Layer<...>` in `core/composition.ts` and driven by one
   per project.
 - Every service is independently testable under `@effect/vitest`
   (`it.effect` + `effect/testing/TestClock` where timing matters) with no
-  Tauri, no React, and no other service running — the pattern the whole
-  migration (`EFFECT-V4-PLAN.md`) was built around, borrowed from
+  Tauri, no React, and no other service running — a pattern borrowed from
   `pingdotgg/t3code`'s production use of the same stack.
-
-**Known trade-off**: per-project reads (`latestByProject`, `gitByProject`,
-`snapshotByProject`) subscribe to the whole map atom rather than a
-per-project derived one, so a card re-renders on *any* project's change,
-not only its own — zustand's fine-grained selectors aren't fully
-replicated. Data is always correct; only render frequency is coarser. A
-candidate fast-follow is `Atom.family`-derived per-project atoms.
+- Per-project reads (`latestDeploymentAtom`, `gitStatusAtom`,
+  `projectSnapshotAtom`, `heldReasonsAtom`) are `Atom.family`-derived over
+  synchronous `SubscriptionRef` reads, giving genuine per-project render
+  isolation: a `ProjectCard` never re-renders on another project's change
+  (see core/atoms.ts's block comment for how this is verified against the
+  atom registry's `Object.is` short-circuit). `presentOnDiskAtom` is
+  deliberately a single whole-`Set` atom — its two readers both need the
+  full set regardless.
 
 ## Filesystem watching
 

@@ -10,8 +10,7 @@ import { Ipc } from "./ipc";
  * in-flight git operation — and it drains exactly once: when its LAST
  * reason is released. The offline component is persisted (dirty_projects
  * setting) so held changes survive an app restart. The state lives in a Ref
- * and every operation is a synchronous Effect, which is what lets the plain
- * bridge below stay a sync surface for the (not yet ported) queue.
+ * and every operation is a synchronous Effect.
  */
 
 export type HoldReason = "offline" | "account-switch" | "git-operation";
@@ -163,61 +162,3 @@ export const layer: Layer.Layer<HeldChangesService, never, Ipc> = Layer.effect(
     });
   }),
 );
-
-// ---- sync facade (queue + composition root need synchronous calls) --------
-
-/** The synchronous surface `DeployQueue` needs — satisfied by `HeldChanges`
- * below, or by any `Effect.runSync` bridge over a real `HeldChangesService`
- * built inside the Layer graph. */
-export interface HeldChangesSync {
-  mark(projectId: string, reason: HoldReason): void;
-  release(reason: HoldReason): string[];
-  releaseOne(projectId: string, reason: HoldReason): boolean;
-  isHeld(projectId: string): boolean;
-  heldBy(reason: HoldReason): string[];
-}
-
-export interface HeldChangesDeps {
-  /** Persist the offline component; called on every change to it. */
-  persistOffline?: (projectIds: string[]) => void;
-}
-
-/**
- * Synchronous facade over the Effect service — every operation is Ref-only,
- * so `runSync` is safe. Keeps the exact pre-Effect surface the queue and
- * composition root already use.
- */
-export class HeldChanges implements HeldChangesSync {
-  private readonly shape: HeldChangesShape;
-
-  constructor(deps: HeldChangesDeps = {}) {
-    const persistOffline = deps.persistOffline;
-    this.shape = Effect.runSync(
-      make(
-        persistOffline
-          ? { persistOffline: (ids) => Effect.sync(() => persistOffline(ids)) }
-          : {},
-      ),
-    );
-  }
-
-  mark(projectId: string, reason: HoldReason): void {
-    Effect.runSync(this.shape.mark(projectId, reason));
-  }
-
-  release(reason: HoldReason): string[] {
-    return Effect.runSync(this.shape.release(reason));
-  }
-
-  releaseOne(projectId: string, reason: HoldReason): boolean {
-    return Effect.runSync(this.shape.releaseOne(projectId, reason));
-  }
-
-  isHeld(projectId: string): boolean {
-    return Effect.runSync(this.shape.isHeld(projectId));
-  }
-
-  heldBy(reason: HoldReason): string[] {
-    return Effect.runSync(this.shape.heldBy(reason));
-  }
-}

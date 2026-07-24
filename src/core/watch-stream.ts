@@ -3,7 +3,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -25,7 +24,7 @@ import type { FsChange } from "../lib/ipc";
  * default concurrency): this module only turns the Tauri callback into a
  * Stream for proper scope-based teardown, it adds no new debounce stage and
  * no per-project fan-out. Per-project independence is provided further
- * downstream, by the deploy queue's own per-project debounce (phase 5).
+ * downstream, by the deploy queue's own per-project debounce.
  */
 
 /** One Stream item per Tauri event — the whole batch, undivided, in order. */
@@ -93,43 +92,3 @@ export const makeWatchStream = Effect.fn("WatchStream.make")(function* (
 
 export const layer = (options: WatchStreamOptions): Layer.Layer<WatchStream> =>
   Layer.effect(WatchStream, makeWatchStream(options));
-
-// ---- plain-TS bridge (until phase 7 inverts the composition root) ---------
-
-export interface WatchStreamPort {
-  start(): Promise<void>;
-  stop(): void;
-}
-
-/**
- * Wraps the real Tauri-backed stream behind the Promise/callback surface the
- * still-plain orchestrator speaks, mirroring `effects.ts`'s bridges. `start`
- * resolves once the listener is registered and the fiber is running; it does
- * not wait for the stream to end (it never does, until `stop`).
- */
-export function createWatchStreamBridge(
-  handleFsChanges: (changes: FsChange[]) => Promise<void>,
-): WatchStreamPort {
-  const runtime = ManagedRuntime.make(
-    layer({ onChanges: (changes) => Effect.promise(() => handleFsChanges(changes)) }),
-  );
-  return {
-    start: () =>
-      runtime.runPromise(
-        Effect.gen(function* () {
-          const watchStream = yield* WatchStream;
-          yield* watchStream.start;
-        }),
-      ),
-    stop: () => {
-      void runtime
-        .runPromise(
-          Effect.gen(function* () {
-            const watchStream = yield* WatchStream;
-            yield* watchStream.stop;
-          }),
-        )
-        .catch(() => {});
-    },
-  };
-}

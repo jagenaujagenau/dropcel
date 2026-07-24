@@ -118,8 +118,9 @@ export interface IpcShape {
   tray: Effectified<RawIpc["tray"]>;
 }
 
-// Events stay Promise/callback-based in lib/ipc until the watcher becomes a
-// Stream (plan: phase 6).
+// Tauri events stay Promise/callback-based in lib/ipc and are used directly
+// from there (composition.ts) — not part of this service. `fs:changed` is
+// the one exception: watch-stream.ts wraps it in a Stream of its own.
 
 export class Ipc extends Context.Service<Ipc, IpcShape>()("dropcel/core/Ipc") {}
 

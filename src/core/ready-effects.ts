@@ -39,8 +39,7 @@ export interface RecordVercelIdsInfo {
 export interface ReadyEffectsShape {
   /** Persist + broadcast a deployment's state change, then dispatch the
    * ready/failed follow-up. Never fails — every internal error is logged
-   * and swallowed, matching the original orchestrator's fire-and-forget
-   * `void persistTransition(...)` call site. */
+   * and swallowed; callers fire this and move on. */
   readonly onTransition: (
     projectId: string,
     deploymentId: string,

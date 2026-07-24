@@ -25,8 +25,8 @@ import * as api from "./vercel-api";
  * parallel refreshes would invalidate each other), the signed-in identity,
  * account-switch detection (uid changed since last session) and its
  * resolution (Keep Links / Start Fresh). It is a Context.Service; the plain
- * orchestrator reaches it through the bridge at the bottom, and auth.ts's
- * getAuthToken() keeps delegating to the active bridge.
+ * bridge at the bottom is what lets auth.ts's getAuthToken() — called from
+ * outside the Layer graph — delegate to the active session.
  */
 
 const UID_SETTING = "auth_user_id";
@@ -87,7 +87,7 @@ export interface AccountSessionDeps {
   fetchUser: (token: string) => Effect.Effect<SessionUser, unknown>;
   getSetting: (key: string) => Effect.Effect<string | null, unknown>;
   setSetting: (key: string, value: string) => Effect.Effect<void, unknown>;
-  // -- sinks (store / notifications / orchestrator) --
+  // -- sinks (AppState / notifications / composition root) --
   setAuthedAs: (username: string | null, avatarUrl?: string | null) => void;
   notify: (title: string, body: string) => void;
   /** An unresolved switch was detected — show the banner, engage holds. */
@@ -110,7 +110,7 @@ export interface AccountSessionDeps {
 
 // ---- service ---------------------------------------------------------------
 
-/** Observable identity state (React reads this from phase 7 on). */
+/** Observable identity state — the render layer reads this via `accountStateAtom`. */
 export interface AccountState {
   username: string | null;
   avatarUrl: string | null;
@@ -365,7 +365,7 @@ export const make = (deps: AccountSessionDeps) =>
 
 // ---- real wiring -----------------------------------------------------------
 
-/** The sinks only the composition root (orchestrator) can provide. */
+/** The sinks only the composition root can provide. */
 export type AccountSessionHooks = Pick<
   AccountSessionDeps,
   | "setAuthedAs"
@@ -416,7 +416,7 @@ export const layer = (
     }),
   );
 
-// ---- plain-TS bridge (orchestrator + auth.ts are still un-ported) ----------
+// ---- plain-TS bridge (auth.ts's getAuthToken() lives outside the Layer graph) ----------
 
 export interface AccountSession {
   getToken(): Promise<string | null>;
@@ -483,9 +483,9 @@ const noopHooks: AccountSessionHooks = {
 };
 
 /**
- * Token access for callers outside the orchestrator (via auth.getAuthToken).
- * Falls back to a bare real session when the orchestrator hasn't composed
- * one yet — same token logic, no identity side effects.
+ * Token access for callers outside the Layer graph (via auth.getAuthToken).
+ * Falls back to a bare real session when the composition root hasn't set
+ * the active one yet — same token logic, no identity side effects.
  */
 export function activeSessionToken(): Promise<string | null> {
   return (active ?? createRealAccountSession(noopHooks)).getToken();

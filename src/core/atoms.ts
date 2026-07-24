@@ -44,12 +44,12 @@ export const onboardedAtom = runtime.subscriptionRef(Effect.map(AppState, (s) =>
 export const themeAtom = runtime.subscriptionRef(Effect.map(AppState, (s) => s.theme));
 
 /** Identity + pending account-switch — sourced straight from
- * `AccountSessionService.state` (phase 3), not duplicated in `AppState`. */
+ * `AccountSessionService.state`, not duplicated in `AppState`. */
 export const accountStateAtom = runtime.subscriptionRef(
   Effect.map(AccountSessionService, (s) => s.state),
 );
 
-/** Connectivity — sourced straight from `Connectivity.online` (phase 2). */
+/** Connectivity — sourced straight from `Connectivity.online`. */
 export const onlineAtom = runtime.subscriptionRef(Effect.map(Connectivity, (c) => c.online));
 
 /** The typed failure from the last `acquireToken` cascade — see
