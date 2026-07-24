@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -84,10 +85,10 @@ export interface QueueDeps {
 
 // ---- one deployment attempt, wrapped in Effect (formerly pipeline.ts) ------
 
-class DeployFailure {
-  readonly _tag = "DeployFailure";
-  constructor(readonly outcome: DeployOutcome) {}
-}
+/** Local-only failure (never crosses a boundary) — Data, not Schema. */
+class DeployFailure extends Data.TaggedError("DeployFailure")<{
+  outcome: DeployOutcome;
+}> {}
 
 /**
  * Build the Effect for one deployment attempt. Fails with DeployFailure so
@@ -105,7 +106,7 @@ function attempt(
     const handle = deployer.deploy(req, onProgress);
     void handle.done.then((outcome) => {
       if (outcome.ok || outcome.canceled) resume(Effect.succeed(outcome));
-      else resume(Effect.fail(new DeployFailure(outcome)));
+      else resume(Effect.fail(new DeployFailure({ outcome })));
     });
     return Effect.sync(() => handle.cancel());
   });

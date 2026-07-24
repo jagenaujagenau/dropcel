@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
 import { describeError } from "../lib/log";
 import type { DeployOutcome, DeployProgress, Deployer, DeployRequest } from "./deployer";
 import { explainFailure } from "./errors";
@@ -48,20 +48,18 @@ export interface ApiDeployerDeps {
 
 const POLL_MS_DEFAULT = 2_500;
 
-class DeployError {
-  readonly _tag = "DeployError";
-  constructor(
-    readonly message: string,
-    readonly retryable: boolean,
-  ) {}
-}
+/** Local-only failure (never crosses a boundary) — Data, not Schema. */
+class DeployError extends Data.TaggedError("DeployError")<{
+  message: string;
+  retryable: boolean;
+}> {}
 
-const fromApi = (e: VercelApiError) => new DeployError(e.message, e.retryable);
+const fromApi = (e: VercelApiError) => new DeployError({ message: e.message, retryable: e.retryable });
 
 const tryOp = <A>(f: () => Promise<A>, describe: string) =>
   Effect.tryPromise({
     try: f,
-    catch: (e) => new DeployError(`${describe}: ${describeError(e)}`, false),
+    catch: (e) => new DeployError({ message: `${describe}: ${describeError(e)}`, retryable: false }),
   });
 
 export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
@@ -80,10 +78,10 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
       const token = yield* tryOp(deps.getToken, "keychain");
       if (!token) {
         return yield* Effect.fail(
-          new DeployError(
-            "No Vercel access token. Open Settings and paste a token (vercel.com → Account → Tokens).",
-            false,
-          ),
+          new DeployError({
+            message: "No Vercel access token. Open Settings and paste a token (vercel.com → Account → Tokens).",
+            retryable: false,
+          }),
         );
       }
       const meta = yield* tryOp(() => deps.getProjectMeta(req.projectName), "project lookup");
@@ -94,7 +92,7 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
       const files = manifest.files;
       if (files.length === 0) {
         return yield* Effect.fail(
-          new DeployError("The project folder is empty — nothing to deploy.", false),
+          new DeployError({ message: "The project folder is empty — nothing to deploy.", retryable: false }),
         );
       }
       log(`${files.length} files, ${files.reduce((n, f) => n + f.size, 0)} bytes`);
@@ -141,7 +139,9 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
         log("Upload complete.");
       }
       if (!deployment) {
-        return yield* Effect.fail(new DeployError("Vercel kept reporting missing files.", false));
+        return yield* Effect.fail(
+          new DeployError({ message: "Vercel kept reporting missing files.", retryable: false }),
+        );
       }
 
       notifyCreated(deployment.id);
@@ -235,7 +235,9 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
       }).pipe(
         // Failures become outcomes; the promise only rejects on interruption.
         Effect.catch((e) =>
-          Effect.succeed(failedOutcome(e instanceof DeployError ? e : new DeployError(String(e), false))),
+          Effect.succeed(
+            failedOutcome(e instanceof DeployError ? e : new DeployError({ message: String(e), retryable: false })),
+          ),
         ),
       );
 
