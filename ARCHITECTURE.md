@@ -97,6 +97,15 @@ one `AppLive: Layer.Layer<...>` in `core/composition.ts` and driven by one
   (`it.effect` + `effect/testing/TestClock` where timing matters) with no
   Tauri, no React, and no other service running — a pattern borrowed from
   `pingdotgg/t3code`'s production use of the same stack.
+- Components that own real interaction logic get a `.test.tsx` under
+  happy-dom, opted into per file with an `@vitest-environment happy-dom`
+  docblock so the service suite keeps running on the (much faster) node
+  environment. The split follows the same instinct as the services above:
+  a component's *decisions* are extracted into a pure module and tested
+  there (`core/commands.ts` for the ⌘K palette's catalog and ranking), and
+  the DOM test covers only what can't exist without mounting — that it
+  renders, that keyboard navigation moves a real selection, and that
+  activating a row runs the right effect.
 - Per-project reads (`latestDeploymentAtom`, `gitStatusAtom`,
   `projectSnapshotAtom`, `heldReasonsAtom`) are `Atom.family`-derived over
   synchronous `SubscriptionRef` reads, giving genuine per-project render
@@ -113,9 +122,19 @@ Two debounce stages, deliberately:
 1. **Rust (600 ms, notify-debouncer-full)** — collapses the raw event storm
    (editors write temp files, fire duplicate modify events) into one batch,
    then classifies each batch into per-project changes
-   (`modified` / `project-added` / `project-removed`). Ignored paths
-   (`.git`, `node_modules`, `.next`, `.vercel`, `dist`, `build`, `coverage`,
-   `.env*`, `.DS_Store`) are dropped here, before they cross IPC.
+   (`modified` / `project-added` / `project-removed`). Ignored paths are
+   dropped here, before they cross IPC: VCS and dependency trees (`.git`,
+   `node_modules`), framework build output (`.next`, `out`, `.nuxt`,
+   `.output`, `.svelte-kit`, `.astro`, `.angular`, `.docusaurus`, `dist`,
+   `build`), tooling caches (`.turbo`, `.parcel-cache`, `.cache`, `.vite`,
+   `coverage`), other toolchains' output (`target`, `__pycache__`, `.venv`,
+   `venv`), plus `.vercel`, `.env*` and `.DS_Store`. `files.rs` shares this
+   list, so the same paths are excluded from the uploaded manifest — which is
+   why the set has to stay conservative: a name that could plausibly be a
+   *source* directory (`vendor`, `tmp`, `public`) is deliberately absent,
+   since a false positive there silently drops files from a deploy. Missing
+   entries are not merely slow: `files.rs` caps a project at 10,000 files, so
+   an unignored `.svelte-kit` can fail a deploy outright.
 2. **TypeScript (2 s, per project)** — a copy of a large project emits many
    batches; the queue waits for quiet before deploying. One save can never
    produce two deployments: if a change arrives while a deployment is
@@ -133,6 +152,28 @@ the rename heuristic below depends on seeing both together in one
 deliveries would let two halves of one rename race two concurrent,
 unserialized reconcile scans against the same stale snapshot.
 
+## Never uploading credentials
+
+Git gives every other deploy tool a staging step: a secret has to be `git add`ed
+before it can be pushed, and `.gitignore` catches most of it first. This app
+removes that step on purpose — whatever is in the folder goes live, and on
+Vercel's Hobby tier the production URL is **public** (Deployment Protection is
+a paid feature). So the deny-list in `watcher.rs` (`is_sensitive_component`)
+*is* the staging step: `.env*`, `*.pem/.key/.p12/.pfx/.keystore/.jks`,
+`id_rsa*` (but not `.pub`), `.npmrc`/`.netrc`/`.pgpass`/`.htpasswd`,
+`credentials.json`, `service-account*`, and whole directories like `.ssh/`,
+`.aws/`, `.kube/`.
+
+The trade runs opposite to `IGNORED_DIRS`. There, a false positive silently
+drops a real file from a deploy, so that list stays conservative. Here a false
+*negative* publishes a private key to the open internet, so this list is
+aggressive — `.key` is excluded even though Keynote also claims that extension.
+
+Silent exclusion would be its own failure, so `files.rs`'s `walk` records every
+skipped path into the manifest (`skippedSensitive`) and `api-deployer` prints
+them to the build log on the stderr stream. The user is told what was withheld,
+whether it was a mistake or something they expected to ship.
+
 ## Content-digest guard
 
 Auto-deploys only run when content actually changed. Each successful deploy
@@ -144,6 +185,41 @@ matches. This is belt-and-braces against any event source that isn't a real
 content change (self-writes, metadata churn, editors touching mtimes).
 Manual deploys never consult the guard, and a guard failure never blocks a
 deploy.
+
+## Rollback vs. the watch loop
+
+Instant Rollback and a folder-watcher disagree by design. Rolling back tells
+Vercel to stop auto-assigning the production domain — so every later
+deployment builds and reports READY while the public URL keeps serving the
+version you rolled back to. A watcher that keeps deploying into that state
+produces a stream of successful-looking deploys that change nothing.
+
+`ready-effects` detects it rather than guessing: `hasStableAddress`
+(`public-url.ts`) asks whether the deployment actually received a verified
+domain or a non-ephemeral alias, and `onReady` only raises the alarm when the
+project **previously had** a stable URL and this deployment does not. That
+second condition is what stops a first-ever deploy — which can briefly have no
+alias — from being reported as a rollback. In that state the notification says
+so plainly and the URL is deliberately **not** copied to the clipboard: handing
+over the per-deployment host would let someone share an address that isn't
+their site while their real one still serves the old version.
+
+## Rate limits and backoff
+
+A folder-watcher is structurally chattier than a git push, and Vercel's Hobby
+limits are low (60 deployments per 5 minutes, 100/hour, 1 concurrent). Meeting
+them is normal operation here, not an edge case.
+
+`vercel-api` parses `Retry-After` off a 429 into `VercelApiError.retryAfterMs`
+(seconds or HTTP-date, clamped to an hour); it flows through `DeployOutcome`
+into the queue, where `Schedule.modifyDelay` uses it in place of the usual
+exponential backoff. Without that the queue retried on its own 3s/6s schedule
+and gave up long before the window cleared — turning a limit that resolves in
+a minute into a visible deployment failure, while the retries themselves added
+to the pressure.
+
+The content-digest guard is the other half of this: the cheapest rate-limit
+strategy is not deploying identical content in the first place.
 
 ## Deployment pipeline
 
@@ -201,7 +277,11 @@ SQLite (WAL) in the platform app-data dir, owned by Rust:
   and with it the Vercel link — survives.
 - `deployments` — state, target, url, error, exit_code, started/finished,
   duration (computed in SQL at terminal transitions).
-- `deployment_logs` — build output lines with timestamp and stream.
+- `deployment_logs` — build output lines with timestamp and stream. Written
+  in batches: build output arrives in bursts (each poll returns everything
+  since the last), and `composition.ts` buffers a burst into one
+  `db_append_logs` insert on a microtask rather than paying an IPC round trip
+  and a transaction per line while the user watches the card.
 - `settings` — key/value (root folder, etc.). Tokens are **not** here; they
   live in the OS keychain.
 
@@ -274,7 +354,17 @@ Built around two guarantees (persisted via the `onboarded` setting):
 Git state is read directly from `.git` (no git binary): branch from `HEAD`,
 sha from loose refs or `packed-refs`, and in-flight operations from their
 marker files (`MERGE_HEAD`, `rebase-merge/`, `rebase-apply/`,
-`CHERRY_PICK_HEAD`, `BISECT_LOG`). Auto-deploys pass through a gate
+`CHERRY_PICK_HEAD`, `BISECT_LOG`).
+
+`.git` is only a directory in an ordinary clone. In a **linked worktree** or a
+**submodule** it is a file holding `gitdir: <path>` (absolute for worktrees,
+relative for submodules), so `read_git_dir` resolves that indirection before
+reading anything; a worktree's refs also live in the main repository, reached
+via its `commondir`. Skipping this used to report `isRepo: false` for both
+cases, which silently disabled the branch lock and the mid-operation hold
+exactly where they matter most — a worktree could auto-deploy mid-rebase.
+
+Auto-deploys pass through a gate
 (`shouldHoldAutoDeploy`, pure + tested):
 
 - **Mid-operation hold** — a merge/rebase working tree is transiently broken
@@ -370,6 +460,29 @@ History, logs, domains, promote/rollback live in Vercel's dashboard — one
 right-click ("Open in Vercel") away. Custom domains assigned there are
 picked up automatically via the deployment alias list.
 
+### The command palette (⌘K)
+
+One screen is the right scope, but "every action lives behind a right-click"
+is not — right-click is undiscoverable and unreachable from the keyboard.
+`components/CommandPalette.tsx` is the keyboard route to the same actions,
+plus the app-level ones (Open Folder, Settings, Rescan, and the most recent
+failed build log, which otherwise takes finding the right card first).
+
+*What* it offers is separated from *how it looks*: `core/commands.ts` is a
+pure module — no React, no Tauri — that builds the catalog from the current
+projects and their latest deployments, and ranks it against a query. Rules
+like "no Copy URL for a project that has never deployed" live there and are
+tested directly (`core/commands.test.ts`); the component supplies icons,
+keyboard navigation, and the side effect per command kind.
+
+Ranking is `lib/fuzzy.ts`, a small scoring subsequence matcher rather than a
+search library: the corpus is a few dozen short labels typed against by
+someone who already knows what they want, so ordering ("dp" → *D*eploy
+*P*review, not the `p` inside "De**p**loy") is the entire problem. It scores
+whole-query substrings, word-boundary hits and adjacent runs, and picks the
+best alignment by dynamic programming — greedy left-to-right gets the
+initials case wrong, which is the case that matters.
+
 ## REST API (no CLI)
 
 The app talks to Vercel exclusively through the REST API — the Vercel CLI is
@@ -453,7 +566,7 @@ drives three surfaces at once:
 - **Folder icons** (`folder_icons.rs`) — Dropbox-style: the root folder gets
   the app's triangle icon at startup, and each project folder gets a dark
   rounded tile with its **framework's logo** (Vercel's SVG icon set bundled
-  from `public/icons`, rasterized with resvg; `other.svg` for unknown/static)
+  from `assets/icons`, rasterized with resvg; `other.svg` for unknown/static)
   plus a green/amber/red status dot, applied via `NSWorkspace.setIcon` on
   macOS. A cache keyed on framework+status skips unchanged repaints.
   Windows (desktop.ini) and Linux (gio metadata) are planned behind the same
