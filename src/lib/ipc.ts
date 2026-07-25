@@ -58,7 +58,9 @@ export const db = {
   listDeployments: (projectId: string, limit?: number) =>
     invoke<Deployment[]>("db_list_deployments", { projectId, limit }),
   latestDeployments: () => invoke<Deployment[]>("db_latest_deployments"),
-  getLogs: (deploymentId: string) => invoke<LogLine[]>("db_get_logs", { deploymentId }),
+  /** `tail` returns only the last n lines, still oldest-first; omit for all. */
+  getLogs: (deploymentId: string, tail?: number) =>
+    invoke<LogLine[]>("db_get_logs", { deploymentId, tail }),
   setDeploymentPublicUrl: (id: string, publicUrl: string) =>
     invoke<void>("db_set_deployment_public_url", { id, publicUrl }),
   setDeploymentVercelIds: (

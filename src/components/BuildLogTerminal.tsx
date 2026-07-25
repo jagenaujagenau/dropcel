@@ -19,6 +19,15 @@ import { cn } from "../lib/utils";
 /** Slow enough not to hammer SQLite, fast enough to feel live. */
 const POLL_MS = 900;
 
+/**
+ * Lines kept. The frame shows about twenty; a Next.js build writes thousands,
+ * and every one of them used to cross the IPC boundary, become a DOM node, and
+ * get reconciled again on the next poll — per card. That is what made the card
+ * hitch as it appeared. Generous enough that a fast scroll-back is still
+ * possible, small enough that the whole thing is a screenful of nodes.
+ */
+const TAIL = 80;
+
 export function BuildLogTerminal({
   deploymentId,
   live,
@@ -37,9 +46,18 @@ export function BuildLogTerminal({
 
     const tick = async () => {
       try {
-        const rows = await ipc.db.getLogs(deploymentId);
+        const rows = await ipc.db.getLogs(deploymentId, TAIL);
         if (cancelled) return;
-        setLines(rows);
+        // Most polls of a slow build step return exactly what the last one
+        // did. Bailing on an unchanged tail keeps those frames free of a
+        // re-render and a scroll write — with a grid of deploying cards all
+        // polling on their own beat, that is the difference between a steady
+        // grid and one that stutters once a second.
+        setLines((prev) =>
+          prev.length === rows.length && prev[prev.length - 1]?.id === rows[rows.length - 1]?.id
+            ? prev
+            : rows,
+        );
       } catch {
         // A log read failing is not worth surfacing on a card — the deploy
         // itself reports its own outcome, and the dialog gives the full story.
@@ -87,8 +105,17 @@ export function BuildLogTerminal({
           </p>
         ))
       )}
-      {/* The cursor is the tell that this is live rather than a transcript. */}
-      {live && <span className="cursor-blink inline-block text-[oklch(0.78_0.15_150)]">▊</span>}
+      {/* The cursor is the tell that this is live rather than a transcript.
+          Drawn as a block rather than typed as ▊: the glyph's width is
+          whatever the font decided — about a third of a cell, and reading as
+          a stray character at 9px — and there is no way to thicken it. A
+          sized element is a real caret, at whatever weight the type wants. */}
+      {live && (
+        <span
+          aria-hidden
+          className="cursor-blink inline-block h-[10px] w-[6px] translate-y-[1px] bg-[oklch(0.78_0.15_150)]"
+        />
+      )}
     </div>
   );
 }

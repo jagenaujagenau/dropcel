@@ -80,7 +80,8 @@ db_command!(db_set_deployment_public_url(id: String, public_url: String) -> ()
 db_command!(db_list_deployments(project_id: String, limit: Option<i64>) -> Vec<Deployment>
     => list_deployments(&project_id, limit.unwrap_or(50)));
 db_command!(db_latest_deployments() -> Vec<Deployment> => latest_deployments());
-db_command!(db_get_logs(deployment_id: String) -> Vec<LogLine> => get_logs(&deployment_id));
+db_command!(db_get_logs(deployment_id: String, tail: Option<i64>) -> Vec<LogLine>
+    => get_logs(&deployment_id, tail));
 
 // ---- domains --------------------------------------------------------------
 

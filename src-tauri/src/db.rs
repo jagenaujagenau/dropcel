@@ -486,13 +486,23 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_logs(&self, deployment_id: &str) -> AppResult<Vec<LogLine>> {
+    /// `tail` caps the result to the last N lines, still in reading order.
+    /// A card-sized terminal shows about twenty lines but a Next.js build
+    /// writes thousands, and the card re-reads them on every poll — so the
+    /// whole log used to cross the IPC boundary once a second to render a
+    /// screenful. `None` returns everything, which is what the log dialog
+    /// wants.
+    pub fn get_logs(&self, deployment_id: &str, tail: Option<i64>) -> AppResult<Vec<LogLine>> {
         let conn = self.conn();
+        // Newest-first inside, oldest-first outside. A negative LIMIT means
+        // "no limit" in SQLite, so the unlimited case needs no second query.
         let mut stmt = conn.prepare(
-            "SELECT id, deployment_id, ts, stream, line FROM deployment_logs
-             WHERE deployment_id = ?1 ORDER BY id",
+            "SELECT id, deployment_id, ts, stream, line FROM (
+                 SELECT id, deployment_id, ts, stream, line FROM deployment_logs
+                 WHERE deployment_id = ?1 ORDER BY id DESC LIMIT ?2
+             ) ORDER BY id",
         )?;
-        let rows = stmt.query_map(params![deployment_id], |r| {
+        let rows = stmt.query_map(params![deployment_id, tail.unwrap_or(-1)], |r| {
             Ok(LogLine {
                 id: r.get(0)?,
                 deployment_id: r.get(1)?,
@@ -605,7 +615,7 @@ mod tests {
             .unwrap();
         assert_eq!(done.state, "ready");
         assert!(done.duration_ms.is_some());
-        assert_eq!(db.get_logs(&d.id).unwrap().len(), 1);
+        assert_eq!(db.get_logs(&d.id, None).unwrap().len(), 1);
         assert_eq!(db.latest_deployments().unwrap().len(), 1);
 
         db.set_setting("theme", "dark").unwrap();
@@ -660,7 +670,7 @@ mod tests {
         )
         .unwrap();
 
-        let logs = db.get_logs(&d.id).unwrap();
+        let logs = db.get_logs(&d.id, None).unwrap();
         assert_eq!(logs.len(), 3);
         // Order is what makes a build log readable at all.
         assert_eq!(logs[0].line, "Installing dependencies...");
@@ -669,13 +679,22 @@ mod tests {
 
         // An empty burst is a no-op, not an empty transaction.
         db.append_logs(&d.id, &[]).unwrap();
-        assert_eq!(db.get_logs(&d.id).unwrap().len(), 3);
+        assert_eq!(db.get_logs(&d.id, None).unwrap().len(), 3);
 
         // A later burst appends after the earlier one.
         db.append_logs(&d.id, &[("stdout".into(), "Done".into())]).unwrap();
-        let logs = db.get_logs(&d.id).unwrap();
+        let logs = db.get_logs(&d.id, None).unwrap();
         assert_eq!(logs.len(), 4);
         assert_eq!(logs[3].line, "Done");
+
+        // The tail is the LAST n lines, still oldest-first — a card terminal
+        // reading them in reverse would be worse than not tailing at all.
+        let tail = db.get_logs(&d.id, Some(2)).unwrap();
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].line, "warning: something");
+        assert_eq!(tail[1].line, "Done");
+        // A tail longer than the log is not an error, just the whole log.
+        assert_eq!(db.get_logs(&d.id, Some(99)).unwrap().len(), 4);
     }
 
     #[test]
