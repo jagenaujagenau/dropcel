@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ExternalLink,
@@ -156,15 +156,22 @@ export function Dashboard() {
         // count changes at the same widths it always did — the cards just fill
         // the row they land in.
         //
-        // 264px minimum, up from 208. At 208 a card was barely wider than the
-        // 19px name and three metrics it has to hold, and the snapshot — the
-        // thing the card is mostly made of — was a thumbnail. The gap grows
-        // with it: 12px between cards that size read as a contact sheet, where
-        // the cards run together into one field rather than being separate
-        // objects.
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(264px,1fr))] gap-5">
+        // The minimum track is a clamp, not a constant. A fixed 264px does the
+        // wrong thing at the window's smallest size (800px wide): only two
+        // tracks fit, so each one stretches to half the window and the cards
+        // come out BIGGER the smaller the window gets, which is backwards.
+        // 21vw keeps roughly four across at 800px — cards of about 173px —
+        // and stops growing at 264px, so a wide window gets more cards rather
+        // than ever-larger ones. The gap is what keeps them reading as
+        // separate objects rather than one contact sheet.
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(clamp(160px,21vw,264px),1fr))] gap-5">
           {matching.map((p) => (
-            <ProjectCard key={p.id} project={p} onContextMenu={onRowMenu(p)} />
+            <ProjectCard
+              key={p.id}
+              project={p}
+              onContextMenu={onRowMenu(p)}
+              menuOpen={menu?.project.id === p.id}
+            />
           ))}
         </div>
       ) : (
@@ -212,7 +219,9 @@ function Metric({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("min-w-0 text-left", className)}>
+    // `title` so the label survives being hidden on a narrow card — a bare
+    // "9s" with no heading is a number without a unit of meaning.
+    <div className={cn("min-w-0 text-left", className)} title={label}>
       {/* Quieter than the value it heads, but not by much: a label is read
           once, to learn what the row is; the value is what you come back to.
           white/65 against the value's white/90 is enough of a step to set the
@@ -222,7 +231,9 @@ function Metric({
           No text shadow. A dark one doubles every glyph (light-on-dark type
           has no lit surface to cast onto) and a bright one is an edge with
           nothing to be an edge of. Both were tried; the scrim carries this. */}
-      <p className="text-[10px] uppercase tracking-wider text-white/65">{label}</p>
+      <p className="hidden text-[10px] uppercase tracking-wider text-white/65 @min-[240px]:block">
+        {label}
+      </p>
       {/* A fixed 18px value line — the height of the Auto switch, the tallest
           thing any of these holds. Left to size themselves the two text cells
           came out shorter than the switch cell, so the three values sat on
@@ -254,8 +265,16 @@ function UrlLine({
   return (
     <button
       className={cn(
-        "flex min-w-0 items-center gap-1 text-xs",
-        glass ? "text-white/70 hover:text-white" : "text-muted hover:text-foreground",
+        // `w-full` and `overflow-hidden` are both load-bearing. A <button> is
+        // shrink-to-fit and will not size its content box below min-content,
+        // so on a narrow card it grew past its parent and took the span with
+        // it — `min-w-0` on the span could never help, because the constraint
+        // never reached it. Pinning the button to the parent's width is what
+        // gives the span something to truncate against.
+        "flex w-full min-w-0 items-center gap-1 overflow-hidden text-xs",
+        // white/80 on glass, not white/70: the scrim under it is lighter than
+        // it used to be, and the URL is the smallest text sitting on it.
+        glass ? "text-white/80 hover:text-white" : "text-muted hover:text-foreground",
         className,
       )}
       onClick={(e) => {
@@ -264,7 +283,11 @@ function UrlLine({
       }}
       title="Open in browser"
     >
-      <span className="truncate" title={url}>
+      {/* `min-w-0` is what makes `truncate` work at all here. A flex item's
+          min-width is `auto`, so this span refused to shrink below the full
+          address and the button overflowed its card instead of ellipsing —
+          only visible once cards got narrow enough for it to matter. */}
+      <span className="min-w-0 truncate" title={url}>
         {url.replace("https://", "")}
       </span>
       <ExternalLink className="h-3 w-3 shrink-0" />
@@ -306,7 +329,11 @@ function MenuButton({
         // mouse; it must not be the *only* way to make the control appear.
         // Sits over the card's screenshot, so it carries its own translucent
         // plate rather than relying on the app surface behind it.
-        "rounded-full bg-black/35 p-1.5 text-white/90 opacity-0 backdrop-blur-md transition-opacity hover:bg-black/55 hover:text-white group-hover:opacity-100 focus-visible:opacity-100",
+        // The blur is `group-hover:` for the same reason the opacity is: an
+        // `opacity-0` element still costs a full backdrop-filter pass on every
+        // frame, and a grid of cards was paying for a dozen invisible ones —
+        // which is what made a window resize stutter.
+        "rounded-full bg-black/35 p-1.5 text-white/90 opacity-0 transition-opacity hover:bg-black/55 hover:text-white group-hover:opacity-100 group-hover:backdrop-blur-md group-data-[menu-open=true]:opacity-100 group-data-[menu-open=true]:backdrop-blur-md focus-visible:opacity-100 focus-visible:backdrop-blur-md",
         className,
       )}
       aria-haspopup="menu"
@@ -391,39 +418,6 @@ function FrameworkChip({ framework }: { framework: Framework }) {
   );
 }
 
-/**
- * The pill is transient: it appears only while a deploy is in flight and is
- * absent the rest of the time.
- *
- * A permanent "Live" badge on every card is noise — the URL underneath already
- * says the site is up, and a row of identical green pills makes the one card
- * that is *actually* doing something harder to spot, not easier. Failure is
- * still surfaced, and more loudly, by the error banner below.
- */
-function StatusPill({
-  deployment,
-  className,
-}: {
-  deployment: Deployment | undefined;
-  className?: string;
-}) {
-  const state = deployment?.state;
-  if (!isDeploying(state)) return null;
-  return (
-    <span
-      // Solid white, not a tinted outline: this sits over an arbitrary
-      // screenshot, where a translucent pill can land on anything.
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-[oklch(0.28_0_0)] shadow-sm",
-        className,
-      )}
-    >
-      <StatusDot state={state} />
-      {STATUS_PILL_LABELS[state ?? "none"]}
-    </span>
-  );
-}
-
 const STATUS_PILL_LABELS: Record<string, string> = {
   none: "No deploys",
   detected: "Detected",
@@ -451,14 +445,17 @@ function DeployingCard({
   project,
   deployment,
   onContextMenu,
+  menuOpen = false,
 }: {
   project: Project;
   deployment: Deployment;
+  menuOpen?: boolean;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
   return (
     <div
       className="terminal-in group relative flex aspect-[4/5] flex-col overflow-hidden rounded-[14px] bg-[oklch(0.145_0.008_265)] shadow-[0_6px_24px_-10px_rgba(0,0,0,0.5)] ring-1 ring-inset ring-white/10"
+      data-menu-open={menuOpen ? "true" : undefined}
       onContextMenu={onContextMenu}
     >
       {/* `rounded-t-[13px]` — one less than the card's 14, for the ring it
@@ -504,9 +501,14 @@ function DeployingCard({
 function ProjectCard({
   project,
   onContextMenu,
+  menuOpen = false,
 }: {
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
+  /** This card's context menu is open. The menu renders outside the card, so
+   * the pointer leaves on the way to it and `focus-within` never applies —
+   * without this the stats vanish the instant you go to act on them. */
+  menuOpen?: boolean;
 }) {
   const latest = useAtomValue(latestDeploymentAtom(project.id));
   const url = publicUrlOf(latest);
@@ -514,9 +516,52 @@ function ProjectCard({
 
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const accent = frameworkAccent(project.framework);
+  const deploying = isDeploying(latest?.state);
+
+  /**
+   * "This deploy just finished" — the one moment the live card animates in.
+   *
+   * Held in state with a timer rather than derived during render, because the
+   * card re-renders several times in the second after a deploy lands (the
+   * snapshot arrives, the URL resolves) and a derived flag would flip to false
+   * mid-animation and cut it off. The timer outlasts the 220ms animation.
+   */
+  const [justDeployed, setJustDeployed] = useState(false);
+  const wasDeploying = useRef(false);
+  useEffect(() => {
+    const finished = wasDeploying.current && !deploying;
+    wasDeploying.current = deploying;
+    if (!finished) return;
+    setJustDeployed(true);
+    const t = setTimeout(() => setJustDeployed(false), 400);
+    return () => clearTimeout(t);
+  }, [deploying]);
+
+  /**
+   * The screenshot being replaced, kept alive under its replacement until the
+   * cross-fade is done. Null at rest and on a project's FIRST screenshot —
+   * there is nothing to fade from there, and fading in over the framework mark
+   * would animate the arrival of something the user never saw missing.
+   */
+  const [previousSnapshot, setPreviousSnapshot] = useState<string | null>(null);
+  const lastSnapshot = useRef(snapshot);
+  useEffect(() => {
+    const outgoing = lastSnapshot.current;
+    lastSnapshot.current = snapshot;
+    if (!snapshot || !outgoing || snapshot === outgoing) return;
+    setPreviousSnapshot(outgoing);
+    const t = setTimeout(() => setPreviousSnapshot(null), 320);
+    return () => clearTimeout(t);
+  }, [snapshot]);
+
   if (latest && isDeploying(latest.state)) {
     return (
-      <DeployingCard project={project} deployment={latest} onContextMenu={onContextMenu} />
+      <DeployingCard
+        project={project}
+        deployment={latest}
+        onContextMenu={onContextMenu}
+        menuOpen={menuOpen}
+      />
     );
   }
 
@@ -541,7 +586,24 @@ function ProjectCard({
       // contour stays on the shadow, where nothing can cover it: it is what
       // defines the card against a light page, since a white hairline over a
       // white screenshot defines nothing.
-      className="group relative aspect-[4/5] overflow-hidden rounded-[14px] shadow-[0_6px_24px_-10px_rgba(0,0,0,0.5),0_0_0_1px_rgba(0,0,0,0.10)] [background:linear-gradient(150deg,color-mix(in_oklab,var(--fw)_22%,var(--color-surface)),var(--card-bg))]"
+      // `contain: layout paint` — during a resize every card relayouts on
+      // every frame, and without containment each one's reflow and repaint is
+      // free to invalidate the whole grid. The card's size comes from its grid
+      // track and its contents are absolutely positioned inside it, so nothing
+      // here needs to influence anything outside it.
+      // `@container` so the contents respond to the CARD's width, not the
+      // window's. The two are unrelated here — a wide window can hold narrow
+      // cards and does, since the grid adds columns rather than growing them.
+      className={cn(
+        "group @container relative aspect-[4/5] overflow-hidden rounded-[14px] shadow-[0_4px_16px_-8px_light-dark(oklch(0_0_0/0.16),oklch(0_0_0/0.5)),0_0_0_1px_light-dark(oklch(0_0_0/0.07),oklch(0_0_0/0.10))] [contain:layout_paint] [background:linear-gradient(150deg,color-mix(in_oklab,var(--fw)_22%,var(--color-surface)),var(--card-bg))]",
+        justDeployed && "card-live-in",
+      )}
+      // Read by the stats plate and the kebab below. An attribute on the group
+      // rather than a prop threaded into each: both are revealed by
+      // `group-hover` already, so this is the same mechanism with a second
+      // trigger, and the variant selector outranks the base `opacity-0`
+      // exactly the way `group-hover` does.
+      data-menu-open={menuOpen ? "true" : undefined}
       onContextMenu={onContextMenu}
     >
       {/*
@@ -552,13 +614,39 @@ function ProjectCard({
         everything this conveys.
       */}
       {snapshot ? (
-        <img
-          src={snapshot}
-          alt=""
-          aria-hidden
-          draggable={false}
-          className="absolute inset-0 h-full w-full object-cover object-top"
-        />
+        <>
+          {/*
+            The outgoing screenshot, held underneath for the length of the
+            cross-fade. Without it the incoming image fades up from the card's
+            gradient — a flash of empty card between two pictures of the same
+            site, which is worse than the instant swap it replaces.
+          */}
+          {previousSnapshot && (
+            <img
+              src={previousSnapshot}
+              alt=""
+              aria-hidden
+              draggable={false}
+              className="absolute inset-0 h-full w-full object-cover object-top"
+            />
+          )}
+          {/*
+            `key` is what makes this animate at all: same element, changed src
+            is not a mount, so the entrance would never re-run for the second
+            screenshot a project ever gets.
+          */}
+          <img
+            key={snapshot}
+            src={snapshot}
+            alt=""
+            aria-hidden
+            draggable={false}
+            className={cn(
+              "absolute inset-0 h-full w-full object-cover object-top",
+              previousSnapshot && "snapshot-in",
+            )}
+          />
+        </>
       ) : (
         // No snapshot yet: the framework's own mark on its gradient, so the
         // card still reads as *this* project rather than as an empty slot.
@@ -617,14 +705,19 @@ function ProjectCard({
           // depth, not legibility, and the top of the snapshot — the site's
           // header, the part that makes it recognisable — is visible again.
           //
-          // The bottom one is back to 0.72 — stronger than the 0.52 it had
-          // when the name moved off it. That weakening is what made the labels
-          // unreadable: over a white screenshot 0.52 lands at a mid grey with
-          // no room left under white text. The labels can be quiet OR the
-          // scrim can be thin, not both.
+          // The bottom one carries the name and URL. Two things were making it
+          // aggressive, and they pull in opposite directions:
+          //
+          //  - 0.75 black over a white screenshot is very nearly black, so a
+          //    pale card came out white-on-top, black-on-bottom. 0.62 still
+          //    holds the title at ~6:1 over pure white, the worst case.
+          //  - shortening it (48% → 34%) cut the darkened area but STEEPENED
+          //    the ramp, and a hard edge between white and near-black is its
+          //    own kind of loud. 38% is the compromise: still well clear of
+          //    half the card, with room for the fade to be a fade.
           background: [
             "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.12) 16%, transparent 32%)",
-            "linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.42) 18%, rgba(0,0,0,0.10) 34%, transparent 48%)",
+            "linear-gradient(to top, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.50) 10%, rgba(0,0,0,0.26) 22%, rgba(0,0,0,0.07) 31%, transparent 38%)",
           ].join(","),
         }}
       />
@@ -634,12 +727,13 @@ function ProjectCard({
         other: three columns in a row, flush to the card's right padding edge.
       */}
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 px-3.5 pt-3">
-        {/* Mark and status share the left, both on the chip's line. The pill
-            used to sit above the metrics, which pushed them down the card and
-            left the two top corners starting at different heights. */}
-        <div className="flex h-7 min-w-0 items-center gap-2">
+        {/* The status pill that used to sit here is gone, along with its
+            component. It could never render: this card returns `DeployingCard`
+            whenever the deployment is in flight, and the pill returned null
+            whenever it was not — the two conditions were exact opposites, so
+            the branch was unreachable from the day the terminal card landed. */}
+        <div className="flex h-7 min-w-0 items-center">
           <FrameworkChip framework={project.framework as Framework} />
-          <StatusPill deployment={latest} />
         </div>
 
         {/*
@@ -663,7 +757,15 @@ function ProjectCard({
           guard is for the same reason from the other side — an invisible
           toggle that still takes clicks is worse than a hidden one.
         */}
-        <div className="pointer-events-none flex shrink-0 items-start gap-4 rounded-xl bg-black/35 px-2.5 py-2 opacity-0 ring-1 ring-inset ring-white/10 backdrop-blur-md backdrop-brightness-[0.45] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        {/* Changes shape with the card rather than wrapping.
+
+            At the window's smallest size a card is ~173px wide, leaving the
+            plate about 109px — the three labelled columns need 165. Letting it
+            wrap produced a ragged two-line block; below 240px it becomes a
+            plain right-aligned column of values instead, labels dropped, which
+            fits easily and looks like a decision rather than an accident. The
+            labels move to tooltips at that size. */}
+        <div className="pointer-events-none flex min-w-0 flex-col items-end gap-1 rounded-xl bg-black/35 px-2.5 py-2 opacity-0 ring-1 ring-inset ring-white/10 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-hover:backdrop-blur-md group-hover:backdrop-brightness-[0.45] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-focus-within:backdrop-blur-md group-focus-within:backdrop-brightness-[0.45] group-data-[menu-open=true]:pointer-events-auto group-data-[menu-open=true]:opacity-100 group-data-[menu-open=true]:backdrop-blur-md group-data-[menu-open=true]:backdrop-brightness-[0.45] @min-[240px]:flex-row @min-[240px]:items-start @min-[240px]:gap-x-3">
           <Metric label="Deployed">
             {latest ? (
               <DeploymentTiming deployment={latest} className="text-white/90" />
@@ -825,6 +927,7 @@ function TableRow({
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const url = publicUrlOf(latest);
   const failed = latest?.state === "failed" && latest.error;
+  const deploying = latest && isDeploying(latest.state);
   const [logsOpen, setLogsOpen] = useState(false);
 
   return (
@@ -860,26 +963,47 @@ function TableRow({
             </div>
           </div>
         </td>
-        <td className="px-3 py-2">
-          <StatusLabel deployment={latest} />
-        </td>
-        <td className="hidden max-w-[280px] px-3 py-2 md:table-cell">
-          {url ? <UrlLine url={url} /> : <span className="text-xs text-faint">—</span>}
-        </td>
-        <td className="hidden px-3 py-2 text-right lg:table-cell">
-          {latest ? (
-            <DeploymentDuration deployment={latest} />
-          ) : (
-            <span className="text-[11px] text-faint">—</span>
-          )}
-        </td>
-        <td className="hidden px-3 py-2 lg:table-cell">
-          {latest ? (
-            <DeploymentTiming deployment={latest} />
-          ) : (
-            <span className="text-[11px] text-faint">—</span>
-          )}
-        </td>
+        {deploying ? (
+          /*
+            Mid-deploy the row shows its build log, the same swap the card view
+            makes. Only the middle four columns are given up for it: Status
+            reads "Building" and says nothing the log does not, and URL, Build
+            and Updated all describe the PREVIOUS deployment — stale numbers
+            sitting beside a live one. The project, its Auto switch and its
+            menu stay put, so the table is still a table and still scannable
+            while one of its rows is busy.
+          */
+          <td colSpan={4} className="px-3 py-1.5">
+            <BuildLogTerminal
+              deploymentId={latest.id}
+              live
+              className="h-[52px] rounded-md ring-1 ring-inset ring-white/10"
+            />
+          </td>
+        ) : (
+          <>
+            <td className="px-3 py-2">
+              <StatusLabel deployment={latest} />
+            </td>
+            <td className="hidden max-w-[280px] px-3 py-2 md:table-cell">
+              {url ? <UrlLine url={url} /> : <span className="text-xs text-faint">—</span>}
+            </td>
+            <td className="hidden px-3 py-2 text-right lg:table-cell">
+              {latest ? (
+                <DeploymentDuration deployment={latest} />
+              ) : (
+                <span className="text-[11px] text-faint">—</span>
+              )}
+            </td>
+            <td className="hidden px-3 py-2 lg:table-cell">
+              {latest ? (
+                <DeploymentTiming deployment={latest} />
+              ) : (
+                <span className="text-[11px] text-faint">—</span>
+              )}
+            </td>
+          </>
+        )}
         <td className="px-3 py-2 text-right">
           <AutoSwitch project={project} />
         </td>
@@ -889,7 +1013,7 @@ function TableRow({
       </tr>
       {failed && (
         <tr className="border-b border-border/60 last:border-0">
-          <td colSpan={6} className="px-3 pb-2 pt-0">
+          <td colSpan={7} className="px-3 pb-2 pt-0">
             <div className="banner-in rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
               <p>{latest.error}</p>
               <button
@@ -916,8 +1040,15 @@ function TableRow({
 function EmptyState() {
   const rootFolder = useAtomState(rootFolderAtom, "");
   return (
+    /*
+      The one place in this app with a delight budget to spend. It is seen
+      once, on a first run, by someone who has just installed the thing and
+      has no projects yet — the opposite of the every-day surfaces, where
+      motion is a tax. A 60ms stagger lets the three lines arrive in the order
+      you read them.
+    */
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <div>
+      <div className="rise-in">
         <h2 className="font-semibold">Your Vercel folder is empty</h2>
         <p className="mt-1 max-w-sm text-pretty text-xs leading-relaxed text-muted">
           Drop a project here — or into{" "}
@@ -925,11 +1056,14 @@ function EmptyState() {
           Live in seconds.
         </p>
       </div>
-      <Button onClick={() => void ipc.fs.openRootFolder()}>
+      <Button
+        className="rise-in [animation-delay:60ms]"
+        onClick={() => void ipc.fs.openRootFolder()}
+      >
         <FolderOpen className="h-3.5 w-3.5" /> Open the Folder
       </Button>
       <button
-        className="text-[11px] text-faint hover:text-muted"
+        className="rise-in text-[11px] text-faint hover:text-muted [animation-delay:120ms]"
         onClick={() => void reconcile(true)}
       >
         Rescan folder

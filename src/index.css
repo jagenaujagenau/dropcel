@@ -408,7 +408,56 @@ body {
   contain: paint;
 }
 
+/* The other half of the deploy: `terminal-in` brings the terminal card in when
+   a deploy starts, this brings the live card back when it finishes. Same
+   values on purpose — the two are one object changing state, and a different
+   curve on the way out would read as a different thing arriving.
+
+   Applied conditionally from Dashboard.tsx, never on plain mount. Every card
+   remounts on a route change and on every keystroke in the filter field; an
+   unconditional entrance would turn typing into a light show. */
+@keyframes card-live-in {
+  from {
+    opacity: 0;
+    transform: scale(0.965);
+  }
+}
+.card-live-in {
+  animation: card-live-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* A fresh screenshot arriving over the outgoing one. Opacity only — a photo
+   that scales while it fades reads as a slide transition, not as the same
+   card's picture being updated. Slower than the UI budget because it is a
+   cross-fade between two images, where the eye wants the handover to be
+   unhurried; it blocks nothing while it runs. */
+@keyframes snapshot-in {
+  from {
+    opacity: 0;
+  }
+}
+.snapshot-in {
+  animation: snapshot-in 300ms ease-out;
+}
+
+/* Empty state. `both` so each element holds its from-state during its delay
+   instead of flashing at full opacity and then starting. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.rise-in {
+  animation: rise-in 200ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* Gentler, not gone. These are all entrances — something appearing where
+     there was nothing — and replacing them with an instant swap trades one
+     accessibility problem for another: a reduced-motion user still benefits
+     from being shown that something arrived, they just should not be moved
+     to see it. So the transforms go and a short fade stays. */
   .drop-overlay,
   .dialog-backdrop,
   .dialog-panel,
@@ -417,7 +466,22 @@ body {
   .step-in,
   .icon-in,
   .terminal-in,
+  .card-live-in,
+  .snapshot-in,
+  .rise-in {
+    animation: reduced-fade 120ms ease-out both;
+  }
+
+  /* Except the blinking caret, which is not an entrance — it is an infinite
+     animation whose whole job is to catch the eye, which is precisely what
+     this preference asks us to stop doing. */
   .cursor-blink {
     animation: none;
+  }
+}
+
+@keyframes reduced-fade {
+  from {
+    opacity: 0;
   }
 }
