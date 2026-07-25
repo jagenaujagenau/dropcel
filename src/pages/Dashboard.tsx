@@ -13,6 +13,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { ProjectContextMenu, type ProjectMenuState } from "../components/ProjectContextMenu";
 import {
+  accountsAtom,
   gitStatusAtom,
   heldReasonsAtom,
   latestDeploymentAtom,
@@ -29,6 +30,7 @@ import type { HoldReason } from "../core/held-changes";
 import { LogViewerDialog } from "../components/LogViewerDialog";
 import { BuildLogTerminal } from "../components/BuildLogTerminal";
 import { FrameworkLogo } from "../components/FrameworkLogo";
+import { AvatarFor } from "../components/UserAvatar";
 import {
   DeploymentDuration,
   DeploymentTiming,
@@ -40,6 +42,7 @@ import { frameworkAccent, frameworkChip } from "../core/framework-theme";
 import {
   FRAMEWORK_LABELS,
   publicUrlOf,
+  type Account,
   type Deployment,
   type Framework,
   type Project,
@@ -103,6 +106,15 @@ export function Dashboard() {
 
   const query = search.trim().toLowerCase();
   const matching = query ? visible.filter((p) => p.name.toLowerCase().includes(query)) : visible;
+
+  /*
+   * Ownership is only worth drawing when there is something to tell apart.
+   * Counted over the projects actually on screen rather than over the
+   * accounts table: having signed into a second account once, years ago, is
+   * not a reason to put an avatar on every card forever.
+   */
+  const owners = new Set(visible.map((p) => p.ownerUid).filter(Boolean));
+  const showOwners = owners.size > 1;
 
   const onRowMenu = (p: Project) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -171,6 +183,7 @@ export function Dashboard() {
               project={p}
               onContextMenu={onRowMenu(p)}
               menuOpen={menu?.project.id === p.id}
+              showOwner={showOwners}
             />
           ))}
         </div>
@@ -396,8 +409,35 @@ function HeldBadge({ project }: { project: Project }) {
 
 // ---- card view -------------------------------------------------------------
 
-/** The framework's logo in white on a gradient of its own brand hue. */
-function FrameworkChip({ framework }: { framework: Framework }) {
+/**
+ * The framework's logo in white on a gradient of its own brand hue, with the
+ * owning account's avatar tucked behind it when this install has projects
+ * from more than one account.
+ *
+ * Overlapped rather than placed beside it: the pair has to read as one mark
+ * ("this project"), not as two competing badges, and the ordering says which
+ * is which — the framework is what the card IS, the account is a qualifier on
+ * it. Nothing renders at all on a single-account install, which is almost
+ * everyone; a permanent avatar that is always the same person is noise.
+ */
+function FrameworkChip({ framework, owner }: { framework: Framework; owner?: Account | null }) {
+  if (owner) {
+    return (
+      <div className="flex items-center">
+        <ChipMark framework={framework} className="relative z-10" />
+        <AvatarFor
+          username={owner.username}
+          avatarUrl={owner.avatarUrl}
+          size={20}
+          className="-ml-2 border-white/25 shadow-[0_1px_2px_oklch(0_0_0/0.35)]"
+        />
+      </div>
+    );
+  }
+  return <ChipMark framework={framework} />;
+}
+
+function ChipMark({ framework, className }: { framework: Framework; className?: string }) {
   return (
     <div
       title={FRAMEWORK_LABELS[framework] ?? framework}
@@ -408,7 +448,10 @@ function FrameworkChip({ framework }: { framework: Framework }) {
       // (say which framework, instantly) for an effect. It gets a soft cast
       // shadow instead, which sits it on the chip without touching its
       // legibility.
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full shadow-[inset_0_1px_0_oklch(1_0_0/0.35),0_1px_2px_oklch(0_0_0/0.35)] ring-1 ring-white/20"
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full shadow-[inset_0_1px_0_oklch(1_0_0/0.35),0_1px_2px_oklch(0_0_0/0.35)] ring-1 ring-white/20",
+        className,
+      )}
     >
       <FrameworkLogo
         framework={framework}
@@ -502,9 +545,14 @@ function ProjectCard({
   project,
   onContextMenu,
   menuOpen = false,
+  showOwner = false,
 }: {
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
+  /** More than one account owns projects in this folder, so whose this is
+   * carries information. Decided by the grid, which is the only place that
+   * can see all the projects at once. */
+  showOwner?: boolean;
   /** This card's context menu is open. The menu renders outside the card, so
    * the pointer leaves on the way to it and `focus-within` never applies —
    * without this the stats vanish the instant you go to act on them. */
@@ -515,6 +563,8 @@ function ProjectCard({
   const [logsOpen, setLogsOpen] = useState(false);
 
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
+  const accounts = useAtomValue(accountsAtom);
+  const owner = showOwner && project.ownerUid ? accounts[project.ownerUid] : null;
   const accent = frameworkAccent(project.framework);
   const deploying = isDeploying(latest?.state);
 
@@ -723,76 +773,28 @@ function ProjectCard({
       />
 
       {/*
-        The top holds the mark on one side and everything measurable on the
-        other: three columns in a row, flush to the card's right padding edge.
+        On hover the card dims a little further from the bottom. The stats
+        appear in a region the resting scrim does not reach — it is strongest
+        at the very bottom and mostly gone by 38% — so revealing them without
+        this puts white 10px labels over whatever the screenshot happens to be.
+        A second layer fading in is cheap (opacity only, no gradient
+        interpolation) and it is only paid for while a card is hovered.
       */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-within:opacity-100 group-data-[menu-open=true]:opacity-100 motion-reduce:transition-none"
+        style={{
+          background:
+            "linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.60) 14%, rgba(0,0,0,0.34) 28%, rgba(0,0,0,0.10) 40%, transparent 50%)",
+        }}
+      />
+
+      {/* The mark keeps the top-left. The menu takes the top-right, where it
+          has a corner to itself — beside the URL it was competing with the
+          address for the one line that has to stay readable. */}
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 px-3.5 pt-3">
-        {/* The status pill that used to sit here is gone, along with its
-            component. It could never render: this card returns `DeployingCard`
-            whenever the deployment is in flight, and the pill returned null
-            whenever it was not — the two conditions were exact opposites, so
-            the branch was unreachable from the day the terminal card landed. */}
-        <div className="flex h-7 min-w-0 items-center">
-          <FrameworkChip framework={project.framework as Framework} />
-        </div>
-
-        {/*
-          The metrics carry their own ground.
-
-          A scrim could not do this job. It is strongest at the edge it starts
-          from and fades inward, so the value that protects the metrics where
-          they sit is far more than the card's own corner needs — covering
-          them meant darkening a third of the image to protect a strip.
-
-          `backdrop-brightness` rather than a flat black fill: it pulls down
-          whatever is actually behind the plate, so a white screenshot gets the
-          darkening it needs and one that is already dark is left alone,
-          keeping its colour through the pane. Worst case — pure white behind —
-          the labels land at ~5:1.
-
-          Hidden until the card is hovered, so at rest the card is its snapshot
-          and its name and nothing else. `group-focus-within` is not optional
-          here: the Auto switch lives inside, and without it a keyboard user
-          tabs to a control that is still at zero opacity. The pointer-events
-          guard is for the same reason from the other side — an invisible
-          toggle that still takes clicks is worse than a hidden one.
-        */}
-        {/* Changes shape with the card rather than wrapping.
-
-            At the window's smallest size a card is ~173px wide, leaving the
-            plate about 109px — the three labelled columns need 165. Letting it
-            wrap produced a ragged two-line block; below 240px it becomes a
-            plain right-aligned column of values instead, labels dropped, which
-            fits easily and looks like a decision rather than an accident. The
-            labels move to tooltips at that size. */}
-        <div className="pointer-events-none flex min-w-0 flex-col items-end gap-1 rounded-xl bg-black/35 px-2.5 py-2 opacity-0 ring-1 ring-inset ring-white/10 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-hover:backdrop-blur-md group-hover:backdrop-brightness-[0.45] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-focus-within:backdrop-blur-md group-focus-within:backdrop-brightness-[0.45] group-data-[menu-open=true]:pointer-events-auto group-data-[menu-open=true]:opacity-100 group-data-[menu-open=true]:backdrop-blur-md group-data-[menu-open=true]:backdrop-brightness-[0.45] @min-[240px]:flex-row @min-[240px]:items-start @min-[240px]:gap-x-3">
-          <Metric label="Deployed">
-            {latest ? (
-              <DeploymentTiming deployment={latest} className="text-white/90" />
-            ) : (
-              <span className="text-white/50">—</span>
-            )}
-          </Metric>
-          <Metric label="Build">
-            {latest ? (
-              <DeploymentDuration deployment={latest} className="text-white/90" />
-            ) : (
-              <span className="text-white/50">—</span>
-            )}
-          </Metric>
-          <Metric label="Auto">
-            <span
-              className="flex items-center"
-              title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
-            >
-              {/* The off state is spelled out because the card's scrim is dark
-                  in both themes while `border-strong` is not: in light theme
-                  it is black at 44%, an off switch that vanishes into the
-                  gradient behind it. */}
-              <AutoSwitch project={project} className="aria-[checked=false]:bg-white/30" />
-            </span>
-          </Metric>
-        </div>
+        <FrameworkChip framework={project.framework as Framework} owner={owner} />
+        <MenuButton onOpen={onContextMenu} className="-mr-0.5 shrink-0" />
       </div>
 
       {/*
@@ -803,15 +805,21 @@ function ProjectCard({
         for the same reason — the text colour cannot depend on the image.
       */}
       {/*
-        Identity along the bottom, with the menu in the corner beside it.
+        Everything the card says about itself, anchored to the bottom edge.
 
-        `items-end` so the kebab sits on the URL's baseline rather than
-        floating against the tallest thing in the row — it is a control that
-        belongs to the card, and the bottom corner is where it stops competing
-        with the mark and the status pill for the top edge.
+        The stats sit BELOW the URL and collapse to nothing at rest. Because
+        the block is anchored to the bottom edge, expanding them there lifts
+        the name and URL up the card rather than pushing them off it — the
+        content moves as one piece, which is the point.
+
+        `max-height` rather than `height: auto` (not animatable) or a
+        grid-rows trick (interpolation is not safe across the engines this
+        ships on). 64px is a little over the real ~46px, so the collapse
+        finishes marginally early — invisible at 200ms, and the cost of a
+        transition that works everywhere.
       */}
-      <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 px-3.5 pb-3">
-        <div className="min-w-0 flex-1">
+      <div className="absolute inset-x-0 bottom-0 px-3.5 pb-3">
+        <div className="min-w-0">
           <h3
             className="truncate text-[19px] font-semibold leading-tight tracking-tight text-white"
             title={project.name}
@@ -854,7 +862,41 @@ function ProjectCard({
           )}
         </div>
 
-        <MenuButton onOpen={onContextMenu} className="-mr-0.5 mb-0.5 shrink-0" />
+        <div className="max-h-0 overflow-hidden opacity-0 transition-[max-height,opacity] duration-200 ease-out group-hover:max-h-16 group-hover:opacity-100 group-focus-within:max-h-16 group-focus-within:opacity-100 group-data-[menu-open=true]:max-h-16 group-data-[menu-open=true]:opacity-100 motion-reduce:transition-none">
+          {/* Spread, not gapped: the three metrics land on the card's own
+              padding edges, so the outer two line up with the name and URL
+              above them. A fixed gap left them clustered against the left
+              edge with dead space to the right, in a row that has the full
+              width of the card to use. */}
+          <div className="flex items-start justify-between gap-x-4 pt-2.5">
+            <Metric label="Deployed">
+              {latest ? (
+                <DeploymentTiming deployment={latest} className="text-white/90" />
+              ) : (
+                <span className="text-white/50">—</span>
+              )}
+            </Metric>
+            <Metric label="Build">
+              {latest ? (
+                <DeploymentDuration deployment={latest} className="text-white/90" />
+              ) : (
+                <span className="text-white/50">—</span>
+              )}
+            </Metric>
+            <Metric label="Auto">
+              <span
+                className="flex items-center"
+                title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
+              >
+                {/* The off state is spelled out because the card's scrim is
+                    dark in both themes while `border-strong` is not: in light
+                    theme it is black at 44%, an off switch that vanishes into
+                    the gradient behind it. */}
+                <AutoSwitch project={project} className="aria-[checked=false]:bg-white/30" />
+              </span>
+            </Metric>
+          </div>
+        </div>
       </div>
 
       {/*
