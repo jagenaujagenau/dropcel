@@ -11,6 +11,10 @@ mod projects;
 mod screenshot;
 mod startup;
 mod tray;
+/// macOS-only: the whole module is AppKit/objc2, and those dependencies are
+/// declared under `[target.'cfg(target_os = "macos")'.dependencies]`. This
+/// declaration-site gate is the only one — `tray_drop.rs` carries no inner
+/// `#![cfg]`, and its call site in `startup.rs` is gated to match.
 #[cfg(target_os = "macos")]
 mod tray_drop;
 mod watcher;
@@ -59,7 +63,7 @@ pub fn run() {
             commands::db_set_deployment_public_url,
             commands::db_set_deployment_vercel_ids,
             commands::db_set_project_team,
-            commands::db_append_log,
+            commands::db_append_logs,
             commands::db_list_deployments,
             commands::db_latest_deployments,
             commands::db_get_logs,

@@ -10,8 +10,6 @@
 //!
 //! Every step is best-effort: if AppKit internals shift, we log and the
 //! tray simply remains a non-drop target.
-#![cfg(target_os = "macos")]
-
 use std::sync::OnceLock;
 
 use objc2::rc::Retained;

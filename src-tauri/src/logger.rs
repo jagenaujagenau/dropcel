@@ -58,7 +58,9 @@ pub fn log(app: &tauri::AppHandle, level: &str, scope: &str, message: &str) {
     }
 }
 
-#[tauri::command]
+/// `(async)`: appends to (and occasionally rotates) the log file, which is
+/// real disk I/O on what would otherwise be the main thread.
+#[tauri::command(async)]
 pub fn log_event(
     logger: tauri::State<'_, Logger>,
     level: String,

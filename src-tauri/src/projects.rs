@@ -27,7 +27,7 @@ pub fn get_root_folder(state: State<'_, WatcherState>) -> String {
 
 /// List every immediate child directory of the root. Hidden and ignored
 /// directories are excluded — everything else is a deployable project.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_projects(state: State<'_, WatcherState>) -> AppResult<Vec<ScannedProject>> {
     let root = state.root.lock().unwrap().clone();
     std::fs::create_dir_all(&root)?;
@@ -50,19 +50,29 @@ pub fn scan_projects(state: State<'_, WatcherState>) -> AppResult<Vec<ScannedPro
     Ok(out)
 }
 
-fn safe_project_path(root: &Path, project: &str, rel: &str) -> AppResult<PathBuf> {
+/// Resolve `rel` inside `root/project`, or refuse.
+///
+/// Canonicalising and then checking containment is the only check that
+/// actually holds: a `..`-segment scan misses absolute paths entirely, because
+/// `Path::join` *discards* the base when the argument is absolute
+/// (`root.join("blog").join("/etc/passwd")` is `/etc/passwd`), and it also
+/// misses symlinks pointing out of the tree. Containment is checked against
+/// the *project* directory rather than the root, so one project can't be used
+/// to read another's files.
+pub(crate) fn safe_project_path(root: &Path, project: &str, rel: &str) -> AppResult<PathBuf> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
         return Err(AppError::Validation(format!("invalid project name: {project}")));
     }
-    let path = root.join(project).join(rel);
-    let canonical_root = root
+    let dir = root.join(project);
+    let path = dir.join(rel);
+    let canonical_dir = dir
         .canonicalize()
-        .map_err(|_| AppError::NotFound("root folder does not exist".into()))?;
+        .map_err(|_| AppError::NotFound(format!("{project} is not in the folder")))?;
     let canonical = path
         .canonicalize()
         .map_err(|_| AppError::NotFound(format!("{rel} not found in {project}")))?;
-    if !canonical.starts_with(&canonical_root) {
-        return Err(AppError::Validation("path escapes the root folder".into()));
+    if !canonical.starts_with(&canonical_dir) {
+        return Err(AppError::Validation("path escapes the project".into()));
     }
     Ok(canonical)
 }
@@ -70,7 +80,7 @@ fn safe_project_path(root: &Path, project: &str, rel: &str) -> AppResult<PathBuf
 /// Read a single file inside a project (e.g. package.json) for framework
 /// detection. Returns None when the file does not exist. Capped at 512 KB so a
 /// stray binary can't be pulled across IPC.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_project_file(
     state: State<'_, WatcherState>,
     project: String,
@@ -90,7 +100,7 @@ pub fn read_project_file(
 
 /// Top-level file/dir names of a project — the cheap signal set the detector
 /// works from (config files like next.config.ts, astro.config.mjs, index.html…).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_project_entries(
     state: State<'_, WatcherState>,
     project: String,
@@ -163,7 +173,7 @@ fn copy_dir(src: &Path, dst: &Path) -> AppResult<()> {
 /// A file or folder was dropped on the app: copy it into the Vercel folder
 /// as a new project. The watcher then picks it up and deploys — the drop
 /// itself is just a copy. Returns the created project name.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_dropped_path(state: State<'_, WatcherState>, path: String) -> AppResult<String> {
     let root = state.root.lock().unwrap().clone();
     import_dropped_path_in(&root, Path::new(&path))
@@ -188,8 +198,28 @@ fn import_dropped_path_in(root: &Path, src: &Path) -> AppResult<String> {
         copy_dir(src, &root.join(&name))?;
         Ok(name)
     } else {
-        // Single file: wrap it in a folder. An HTML file becomes index.html
-        // so it deploys as a static site immediately.
+        // Single file: only a web page is a site on its own, and it becomes
+        // index.html so it deploys immediately.
+        //
+        // Anything else is refused rather than wrapped. A lone photo.png used
+        // to become photo/photo.png — a folder with no index.html and no
+        // package.json, which `isDeployable` skips, so it never deployed and
+        // never appeared in the UI, while the drop had already reported
+        // "Deploying photo…". Failing here costs the user nothing (no stray
+        // folder is left behind) and the message reaches the same toast.
+        let is_html = src
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"))
+            .unwrap_or(false);
+        if !is_html {
+            let file = src
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "That file".into());
+            return Err(AppError::Validation(format!(
+                "{file} can't be a site on its own. Put it in a folder with an index.html, then drop the folder."
+            )));
+        }
         let stem = src
             .file_stem()
             .map(|n| n.to_string_lossy().to_string())
@@ -197,16 +227,7 @@ fn import_dropped_path_in(root: &Path, src: &Path) -> AppResult<String> {
         let name = unique_project_name(root, &stem);
         let dir = root.join(&name);
         std::fs::create_dir_all(&dir)?;
-        let is_html = src
-            .extension()
-            .map(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"))
-            .unwrap_or(false);
-        let target = if is_html {
-            dir.join("index.html")
-        } else {
-            dir.join(src.file_name().unwrap_or_default())
-        };
-        std::fs::copy(src, &target)?;
+        std::fs::copy(src, dir.join("index.html"))?;
         Ok(name)
     }
 }
@@ -216,7 +237,7 @@ fn import_dropped_path_in(root: &Path, src: &Path) -> AppResult<String> {
 /// "in the folder = live" promise. Adopt web pages: move each root-level
 /// .html/.htm into its own project folder as index.html. Other file types
 /// are left alone.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn adopt_loose_files(state: State<'_, WatcherState>) -> AppResult<Vec<String>> {
     let root = state.root.lock().unwrap().clone();
     adopt_loose_files_in(&root)
@@ -306,7 +327,7 @@ pub fn create_example_project(state: State<'_, WatcherState>) -> AppResult<Strin
 
 /// Move a project folder to the OS trash — recoverable, never rm -rf.
 /// Watching stops via the normal filesystem-removal path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn trash_project(state: State<'_, WatcherState>, project: String) -> AppResult<()> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
         return Err(AppError::Validation(format!("invalid project name: {project}")));
@@ -330,6 +351,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// `Path::join` discards the base for an absolute argument, so a scan for
+    /// `..` segments — which is what the deploy-file reader used to do — lets
+    /// `/etc/passwd` through untouched. Containment has to be checked after
+    /// canonicalising.
+    #[test]
+    fn safe_project_path_refuses_to_escape_the_project() {
+        let root = scratch("safe-path");
+        let project = root.join("blog");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("index.html"), "<h1>hi</h1>").unwrap();
+        // A sibling project, and a file outside the root entirely.
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        std::fs::write(root.join("other/secret.txt"), "nope").unwrap();
+        std::fs::write(root.join("outside.txt"), "nope").unwrap();
+
+        // The legitimate case still resolves.
+        assert!(safe_project_path(&root, "blog", "index.html").is_ok());
+
+        // An absolute path must not silently replace the base.
+        assert!(safe_project_path(&root, "blog", "/etc/hosts").is_err());
+        assert!(safe_project_path(
+            &root,
+            "blog",
+            root.join("outside.txt").to_str().unwrap()
+        )
+        .is_err());
+        // …nor may one project reach into another.
+        assert!(safe_project_path(&root, "blog", "../other/secret.txt").is_err());
     }
 
     #[test]
@@ -383,6 +434,35 @@ mod tests {
             import_dropped_path_in(&root, &root.join("blog")),
             Err(AppError::Validation(_))
         ));
+    }
+
+    /// A lone non-web file is refused outright. The old behaviour wrapped it
+    /// in a folder that `isDeployable` then skipped: nothing deployed, nothing
+    /// showed up in the UI, and the drop still said "Deploying photo…". The
+    /// refusal has to leave the root untouched, or the user is left with an
+    /// empty project folder they never asked for.
+    #[test]
+    fn import_refuses_a_single_non_web_file_without_creating_anything() {
+        let root = scratch("import-nonweb-root");
+        let elsewhere = scratch("import-nonweb-src");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("photo.png"), [0x89, b'P', b'N', b'G']).unwrap();
+
+        let err = import_dropped_path_in(&root, &elsewhere.join("photo.png")).unwrap_err();
+        match err {
+            AppError::Validation(msg) => {
+                // The message names the file and says what to do instead.
+                assert!(msg.contains("photo.png"), "{msg}");
+                assert!(msg.contains("index.html"), "{msg}");
+            }
+            other => panic!("expected a validation error, got {other:?}"),
+        }
+
+        assert!(!root.join("photo").exists(), "no stray project folder");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0, "root untouched");
+        // And the source file is still where the user left it.
+        assert!(elsewhere.join("photo.png").is_file());
     }
 
     #[test]

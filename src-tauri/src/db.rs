@@ -81,6 +81,13 @@ pub fn open(db_path: &Path) -> AppResult<Db> {
     }
     let conn = Connection::open(db_path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    // WAL's standard companion. At the default FULL, every commit fsyncs —
+    // and build logs commit once per captured line, so a chatty Next.js build
+    // turns into hundreds of fsyncs while the user is watching the card.
+    // NORMAL still survives process crashes (the WAL is replayed); only a
+    // kernel panic or power loss can cost the last few commits, which for
+    // deployment logs and a cache of Vercel's own state is the right trade.
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     migrate(&conn)?;
     Ok(Db(Mutex::new(conn)))
@@ -98,10 +105,30 @@ fn migrate(conn: &Connection) -> AppResult<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (i, migration) in MIGRATIONS.iter().enumerate() {
         let target = (i + 1) as i64;
-        if version < target {
-            conn.execute_batch(migration)?;
-            conn.pragma_update(None, "user_version", target)?;
+        if version >= target {
+            continue;
         }
+        // The migration and its version bump have to land together or not at
+        // all. Several steps here are multi-statement batches (v4, v6); run
+        // unwrapped, a failure on the *second* `ALTER TABLE` — disk full, a
+        // crash, SQLITE_BUSY — leaves the first column added but
+        // `user_version` still behind. Every subsequent launch then re-runs
+        // the whole batch, hits "duplicate column name", and `open()` returns
+        // Err: the app can never start again, with no recovery short of
+        // deleting the database.
+        //
+        // SQLite DDL is transactional, and `PRAGMA user_version` writes the
+        // database header inside the transaction like any other page, so
+        // wrapping both in BEGIN/COMMIT makes each step atomic.
+        conn.execute_batch(&format!(
+            "BEGIN;\n{migration}\nPRAGMA user_version = {target};\nCOMMIT;"
+        ))
+        .inspect_err(|_| {
+            // Leave no half-open transaction behind for the caller. If BEGIN
+            // itself was what failed there's nothing to roll back and this is
+            // a harmless no-op.
+            let _ = conn.execute_batch("ROLLBACK;");
+        })?;
     }
     Ok(())
 }
@@ -360,6 +387,21 @@ impl Db {
     ) -> AppResult<Deployment> {
         let conn = self.conn();
         let terminal = matches!(state, "ready" | "failed" | "canceled");
+        // `AND finished_at IS NULL` on both branches makes a terminal state
+        // final at the storage layer.
+        //
+        // The queue forks an independent fiber per transition, each doing its
+        // own async `update_deployment`, with no ordering between them — so a
+        // straggling non-terminal write could land *after* the terminal one
+        // and leave `state = 'building'` on a row that already has
+        // `finished_at` and `duration_ms` set: a spinner that never stops, on
+        // a deployment that finished. `advance()`'s monotonicity check only
+        // ever protected the queue's in-memory variable, never the row.
+        //
+        // Guarding here rather than in the caller means it holds no matter
+        // which fiber, or which future code path, gets there first. The
+        // re-read below returns the row as it actually stands, so a no-op
+        // update reports the truth rather than the write that lost.
         if terminal {
             conn.execute(
                 "UPDATE deployments SET state = ?2,
@@ -368,12 +410,13 @@ impl Db {
                     exit_code = ?5,
                     finished_at = ?6,
                     duration_ms = CAST((julianday(?6) - julianday(started_at)) * 86400000 AS INTEGER)
-                 WHERE id = ?1",
+                 WHERE id = ?1 AND finished_at IS NULL",
                 params![id, state, url, error, exit_code, now()],
             )?;
         } else {
             conn.execute(
-                "UPDATE deployments SET state = ?2, url = COALESCE(?3, url) WHERE id = ?1",
+                "UPDATE deployments SET state = ?2, url = COALESCE(?3, url)
+                 WHERE id = ?1 AND finished_at IS NULL",
                 params![id, state, url],
             )?;
         }
@@ -415,11 +458,31 @@ impl Db {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    pub fn append_log(&self, deployment_id: &str, stream: &str, line: &str) -> AppResult<()> {
-        self.conn().execute(
-            "INSERT INTO deployment_logs (deployment_id, ts, stream, line) VALUES (?1, ?2, ?3, ?4)",
-            params![deployment_id, now(), stream, line],
-        )?;
+    /// Append a run of log lines as one transaction.
+    ///
+    /// Build output arrives in bursts — a poll returns everything since the
+    /// last one, often dozens of lines at a time. Inserted individually that
+    /// is one IPC round trip and one implicit transaction (and, before
+    /// `synchronous = NORMAL`, one fsync) *per line*, all landing while the
+    /// user is watching the deployment card. One statement reused inside a
+    /// single transaction turns a burst into a single commit.
+    pub fn append_logs(&self, deployment_id: &str, lines: &[(String, String)]) -> AppResult<()> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO deployment_logs (deployment_id, ts, stream, line)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            let ts = now();
+            for (stream, line) in lines {
+                stmt.execute(params![deployment_id, ts, stream, line])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -536,7 +599,7 @@ mod tests {
             .unwrap();
         assert_eq!(d.state, "queued");
         assert_eq!(d.branch.as_deref(), Some("main"));
-        db.append_log(&d.id, "stdout", "Uploading...").unwrap();
+        db.append_logs(&d.id, &[("stdout".into(), "Uploading...".into())]).unwrap();
         let done = db
             .update_deployment(&d.id, "ready", Some("https://blog.vercel.app"), None, Some(0))
             .unwrap();
@@ -552,6 +615,67 @@ mod tests {
         assert!(db.list_projects().unwrap().is_empty());
         // cascade removed deployments
         assert!(db.list_deployments(&p.id, 10).unwrap().is_empty());
+    }
+
+    /// The queue forks one fiber per transition with no ordering between
+    /// them, so a late non-terminal write can arrive after the terminal one.
+    /// If it landed, the row would read `building` while already carrying
+    /// `finished_at` — a spinner that never stops on a finished deployment.
+    #[test]
+    fn a_terminal_deployment_state_is_final() {
+        let db = open_in_memory().unwrap();
+        let p = db.upsert_project("blog", "/tmp/Vercel/blog", "astro").unwrap();
+        let d = db.insert_deployment(&p.id, "production", None, None).unwrap();
+
+        db.update_deployment(&d.id, "ready", Some("https://blog.vercel.app"), None, Some(0))
+            .unwrap();
+
+        // A straggler from an earlier phase must not move the state backwards…
+        let after = db.update_deployment(&d.id, "building", None, None, None).unwrap();
+        assert_eq!(after.state, "ready");
+        assert!(after.finished_at.is_some());
+
+        // …nor may a second terminal state overwrite the first.
+        let after = db.update_deployment(&d.id, "canceled", None, None, None).unwrap();
+        assert_eq!(after.state, "ready");
+        assert_eq!(after.url.as_deref(), Some("https://blog.vercel.app"));
+    }
+
+    /// Build output arrives in bursts of dozens of lines; inserted one at a
+    /// time that is an IPC round trip and a transaction each, right while the
+    /// user is watching the card.
+    #[test]
+    fn append_logs_writes_a_burst_in_order() {
+        let db = open_in_memory().unwrap();
+        let p = db.upsert_project("blog", "/tmp/Vercel/blog", "static").unwrap();
+        let d = db.insert_deployment(&p.id, "production", None, None).unwrap();
+
+        db.append_logs(
+            &d.id,
+            &[
+                ("stdout".into(), "Installing dependencies...".into()),
+                ("stdout".into(), "Building...".into()),
+                ("stderr".into(), "warning: something".into()),
+            ],
+        )
+        .unwrap();
+
+        let logs = db.get_logs(&d.id).unwrap();
+        assert_eq!(logs.len(), 3);
+        // Order is what makes a build log readable at all.
+        assert_eq!(logs[0].line, "Installing dependencies...");
+        assert_eq!(logs[2].line, "warning: something");
+        assert_eq!(logs[2].stream, "stderr");
+
+        // An empty burst is a no-op, not an empty transaction.
+        db.append_logs(&d.id, &[]).unwrap();
+        assert_eq!(db.get_logs(&d.id).unwrap().len(), 3);
+
+        // A later burst appends after the earlier one.
+        db.append_logs(&d.id, &[("stdout".into(), "Done".into())]).unwrap();
+        let logs = db.get_logs(&d.id).unwrap();
+        assert_eq!(logs.len(), 4);
+        assert_eq!(logs[3].line, "Done");
     }
 
     #[test]

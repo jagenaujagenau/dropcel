@@ -15,7 +15,7 @@ fn entry() -> AppResult<Entry> {
     entry_for(ACCOUNT)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vercel_token() -> AppResult<Option<String>> {
     match entry()?.get_password() {
         Ok(token) => Ok(Some(token)),
@@ -24,14 +24,14 @@ pub fn get_vercel_token() -> AppResult<Option<String>> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vercel_token(token: String) -> AppResult<()> {
     entry()?
         .set_password(&token)
         .map_err(|e| AppError::Keychain(e.to_string()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_vercel_token() -> AppResult<()> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -41,7 +41,7 @@ pub fn delete_vercel_token() -> AppResult<()> {
 
 // ---- OAuth refresh token (imported CLI sessions rotate) --------------------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vercel_refresh_token() -> AppResult<Option<String>> {
     match entry_for(REFRESH_ACCOUNT)?.get_password() {
         Ok(token) => Ok(Some(token)),
@@ -50,14 +50,14 @@ pub fn get_vercel_refresh_token() -> AppResult<Option<String>> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_vercel_refresh_token(token: String) -> AppResult<()> {
     entry_for(REFRESH_ACCOUNT)?
         .set_password(&token)
         .map_err(|e| AppError::Keychain(e.to_string()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_vercel_refresh_token() -> AppResult<()> {
     match entry_for(REFRESH_ACCOUNT)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -122,7 +122,7 @@ fn auth_json_candidates() -> Vec<std::path::PathBuf> {
     out
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_cli_token() -> Option<CliToken> {
     for path in auth_json_candidates() {
         if let Ok(raw) = std::fs::read_to_string(&path) {

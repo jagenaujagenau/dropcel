@@ -1,3 +1,9 @@
+//! Deployment snapshots. Vercel's dashboard screenshots come from an
+//! internal service with no public API, so we capture our own: a headless
+//! Chromium-family browser renders the deployed URL to a PNG stored in the
+//! app data dir. If no compatible browser is installed the feature quietly
+//! degrades to a placeholder in the UI.
+
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -9,13 +15,12 @@ use tokio::process::Command;
 
 use crate::error::{AppError, AppResult};
 
-/// Deployment snapshots. Vercel's dashboard screenshots come from an
-/// internal service with no public API, so we capture our own: a headless
-/// Chromium-family browser renders the deployed URL to a PNG stored in the
-/// app data dir. If no compatible browser is installed the feature quietly
-/// degrades to a placeholder in the UI.
-
+/// Capture size — a desktop viewport, so pages lay out as their authors
+/// intended rather than hitting a mobile breakpoint.
 const VIEWPORT: &str = "1280,800";
+
+/// Stored size. See `downscale_in_place` for why this is far below `VIEWPORT`.
+const STORED_WIDTH: u32 = 800;
 
 fn browser_candidates() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec![];
@@ -181,12 +186,37 @@ pub async fn capture_snapshot(
             status.code()
         )));
     }
+    downscale_in_place(&tmp);
     std::fs::rename(&tmp, &out)?;
     encode(&out)
 }
 
+/// Shrink a freshly-captured shot to `STORED_WIDTH` before it is stored.
+///
+/// The capture stays at `VIEWPORT` so the page lays out as a desktop site,
+/// but nothing ever displays it at that size: the card art is ~400 CSS px
+/// wide, so `STORED_WIDTH` is already 2× for a retina screen. Storing the full
+/// 1280px shot meant every snapshot crossed IPC base64-encoded at ~4× the
+/// bytes it needed, then sat in the JS heap for the lifetime of the app —
+/// startup hydration alone shipped one per project in a single payload.
+///
+/// Best-effort by design: this is an optimisation, and a snapshot that fails
+/// to re-encode is still a perfectly good snapshot at the original size.
+fn downscale_in_place(path: &PathBuf) {
+    let Ok(img) = image::open(path) else { return };
+    if img.width() <= STORED_WIDTH {
+        return;
+    }
+    let height = (img.height() as f32 * (STORED_WIDTH as f32 / img.width() as f32)).round() as u32;
+    // Triangle (bilinear) rather than Lanczos: this is a photographic
+    // downscale viewed small, where the sharper filter's ringing on UI edges
+    // is more visible than the detail it preserves — and it is much faster.
+    let resized = img.resize_exact(STORED_WIDTH, height.max(1), image::imageops::FilterType::Triangle);
+    let _ = resized.save(path);
+}
+
 /// Load the last stored snapshot for a project, if any.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_snapshot(app: AppHandle, project_id: String) -> AppResult<Option<Snapshot>> {
     let path = snapshot_path(&app, &project_id)?;
     if !path.is_file() {
@@ -198,7 +228,7 @@ pub fn get_snapshot(app: AppHandle, project_id: String) -> AppResult<Option<Snap
 /// Same as `get_snapshot`, batched: startup hydration otherwise costs one
 /// IPC round trip per project. A missing/unreadable snapshot for one project
 /// is simply absent from the map — it never fails the whole batch.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_snapshots_batch(
     app: AppHandle,
     project_ids: Vec<String>,
@@ -219,7 +249,7 @@ pub fn get_snapshots_batch(
 }
 
 /// Drop a project's snapshot (called when the project is forgotten).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_snapshot(app: AppHandle, project_id: String) -> AppResult<()> {
     let path = snapshot_path(&app, &project_id)?;
     if path.is_file() {
@@ -238,6 +268,47 @@ mod tests {
         for url in ["http://example.com", "file:///etc/passwd", "ftp://x", "example.com"] {
             assert!(matches!(ensure_https(url), Err(AppError::Validation(_))), "{url}");
         }
+    }
+
+    /// Card art is ~400 CSS px wide; storing the full 1280px capture meant
+    /// every snapshot crossed IPC base64-encoded at roughly 4x the bytes it
+    /// needed and stayed in the JS heap for the session.
+    #[test]
+    fn downscale_shrinks_a_capture_and_keeps_its_aspect_ratio() {
+        let dir = std::env::temp_dir().join(format!("dropcel-shot-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shot.png");
+
+        // Deterministic pseudo-noise, not a gradient: a linear ramp compresses
+        // almost perfectly at any size, so the full-size PNG would come out
+        // *smaller* than the downscaled one and the byte assertion below would
+        // be measuring PNG's filters rather than the resize. Real screenshots
+        // are incompressible enough that pixel count dominates.
+        let mut seed: u32 = 0x1234_5678;
+        image::RgbaImage::from_fn(1280, 800, |_, _| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let b = (seed >> 16) as u8;
+            image::Rgba([b, b.wrapping_mul(3), b.wrapping_add(97), 255])
+        })
+        .save(&path)
+        .unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+
+        downscale_in_place(&path);
+
+        let after_img = image::open(&path).unwrap();
+        assert_eq!(after_img.width(), STORED_WIDTH);
+        // 1280x800 is 16:10, so 800 wide must land on 500 tall.
+        assert_eq!(after_img.height(), 500);
+        assert!(std::fs::metadata(&path).unwrap().len() < before);
+
+        // Already small enough: left exactly as-is rather than re-encoded.
+        let small = dir.join("small.png");
+        image::RgbaImage::new(320, 200).save(&small).unwrap();
+        downscale_in_place(&small);
+        assert_eq!(image::open(&small).unwrap().width(), 320);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

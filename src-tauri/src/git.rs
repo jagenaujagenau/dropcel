@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::State;
@@ -27,10 +27,37 @@ impl GitInfo {
     }
 }
 
-pub fn read_git_dir(git: &Path) -> GitInfo {
-    if !git.is_dir() {
-        return GitInfo::not_a_repo();
+/// Resolve `.git` to the directory that actually holds `HEAD`.
+///
+/// For an ordinary clone `.git` *is* that directory. For a linked worktree or
+/// a submodule it is a **file** containing `gitdir: <path>`, and treating that
+/// as "not a repo" meant `is_repo: false` for both — so the branch lock and
+/// the mid-operation hold silently did not apply, and the app would happily
+/// auto-deploy a worktree in the middle of a rebase. That is exactly the
+/// "broken states are held, not shipped" promise, failing quietly for the
+/// users most likely to rely on it.
+fn resolve_git_dir(git: &Path) -> Option<PathBuf> {
+    if git.is_dir() {
+        return Some(git.to_path_buf());
     }
+    let contents = std::fs::read_to_string(git).ok()?;
+    let target = contents.trim().strip_prefix("gitdir:")?.trim();
+    let path = Path::new(target);
+    // The recorded path may be relative to the directory holding the `.git`
+    // file (git writes relative paths for submodules).
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        git.parent()?.join(path)
+    };
+    resolved.is_dir().then_some(resolved)
+}
+
+pub fn read_git_dir(git: &Path) -> GitInfo {
+    let Some(git_dir) = resolve_git_dir(git) else {
+        return GitInfo::not_a_repo();
+    };
+    let git = git_dir.as_path();
 
     let head_raw = std::fs::read_to_string(git.join("HEAD")).unwrap_or_default();
     let head = head_raw.trim();
@@ -69,14 +96,32 @@ pub fn read_git_dir(git: &Path) -> GitInfo {
 }
 
 fn packed_ref_sha(git: &Path, reference: &str) -> Option<String> {
-    let packed = std::fs::read_to_string(git.join("packed-refs")).ok()?;
-    packed.lines().find_map(|line| {
-        let (sha, name) = line.split_once(' ')?;
-        (name.trim() == reference).then(|| sha.trim().to_string())
+    let find = |dir: &Path| -> Option<String> {
+        let packed = std::fs::read_to_string(dir.join("packed-refs")).ok()?;
+        packed.lines().find_map(|line| {
+            let (sha, name) = line.split_once(' ')?;
+            (name.trim() == reference).then(|| sha.trim().to_string())
+        })
+    };
+    find(git).or_else(|| {
+        // A linked worktree's git dir has no `packed-refs` of its own — refs
+        // are shared with the main repository, which `commondir` points at.
+        let common = std::fs::read_to_string(git.join("commondir")).ok()?;
+        let common = common.trim();
+        let path = Path::new(common);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            git.join(path)
+        };
+        find(&resolved)
     })
 }
 
-#[tauri::command]
+/// `(async)`: this runs once per project on every structural reconcile, and a
+/// plain command body would do all of that `.git` reading on the main thread,
+/// where it blocks the webview from painting.
+#[tauri::command(async)]
 pub fn git_info(state: State<'_, WatcherState>, project: String) -> AppResult<GitInfo> {
     if project.contains(['/', '\\']) || project.starts_with('.') {
         return Err(AppError::Validation(format!("invalid project name: {project}")));
@@ -140,6 +185,73 @@ mod tests {
         let info = read_git_dir(&git);
         assert_eq!(info.branch, None);
         assert_eq!(info.sha.as_deref(), Some("abc999"));
+    }
+
+    /// A linked worktree's `.git` is a *file* pointing at the real git dir.
+    /// Reported as "not a repo", the branch lock and the mid-rebase hold both
+    /// silently stopped applying — so a worktree could auto-deploy mid-rebase.
+    #[test]
+    fn worktree_git_file_resolves_to_the_real_git_dir() {
+        let root = scratch("worktree");
+        // The main repo, with the worktree's private git dir inside it.
+        let wt_git = root.join("main/.git/worktrees/feature");
+        std::fs::create_dir_all(&wt_git).unwrap();
+        std::fs::write(wt_git.join("HEAD"), "ref: refs/heads/feature/x\n").unwrap();
+        std::fs::write(wt_git.join("commondir"), "../..\n").unwrap();
+        // Refs are shared with the main repo, not stored per-worktree.
+        std::fs::write(
+            root.join("main/.git/packed-refs"),
+            "# pack-refs with: peeled\nabc123 refs/heads/feature/x\n",
+        )
+        .unwrap();
+        // The checkout itself: `.git` is a file, absolute gitdir.
+        let checkout = root.join("feature");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", wt_git.display()),
+        )
+        .unwrap();
+
+        let info = read_git_dir(&checkout.join(".git"));
+        assert!(info.is_repo);
+        assert_eq!(info.branch.as_deref(), Some("feature/x"));
+        // Resolved through `commondir` — the worktree has no packed-refs.
+        assert_eq!(info.sha.as_deref(), Some("abc123"));
+
+        // A rebase in the worktree must be seen, so auto-deploys hold.
+        std::fs::create_dir_all(wt_git.join("rebase-merge")).unwrap();
+        assert_eq!(
+            read_git_dir(&checkout.join(".git")).operation.as_deref(),
+            Some("rebase")
+        );
+    }
+
+    /// Submodules use the same mechanism, but git records a *relative* path.
+    #[test]
+    fn submodule_git_file_with_a_relative_gitdir_resolves() {
+        let root = scratch("submodule");
+        let real = root.join(".git/modules/lib");
+        std::fs::create_dir_all(real.join("refs/heads")).unwrap();
+        std::fs::write(real.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(real.join("refs/heads/main"), "deadbeef\n").unwrap();
+
+        let sub = root.join("lib");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join(".git"), "gitdir: ../.git/modules/lib\n").unwrap();
+
+        let info = read_git_dir(&sub.join(".git"));
+        assert!(info.is_repo);
+        assert_eq!(info.branch.as_deref(), Some("main"));
+        assert_eq!(info.sha.as_deref(), Some("deadbeef"));
+    }
+
+    /// A `.git` file pointing nowhere is still not a repo.
+    #[test]
+    fn dangling_git_file_is_not_a_repo() {
+        let dir = scratch("dangling");
+        std::fs::write(dir.join(".git"), "gitdir: /nope/does/not/exist\n").unwrap();
+        assert_eq!(read_git_dir(&dir.join(".git")), GitInfo::not_a_repo());
     }
 
     #[test]

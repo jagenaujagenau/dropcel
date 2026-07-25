@@ -12,9 +12,19 @@ use crate::watcher::{self, WatcherState};
 /// each line expands to `fn <name>(db, args…) -> AppResult<ret> { db.<method>(fwd…) }`.
 /// Argument names are part of the IPC contract — Tauri maps the camelCase
 /// keys in src/lib/ipc.ts onto these snake_case names.
+///
+/// `(async)` rather than a plain `#[tauri::command]`: a sync command body runs
+/// on the **main thread**, so the webview cannot paint while it executes.
+/// These are SQLite calls behind a mutex — usually microseconds, but
+/// `db_append_logs` writes a whole burst of build-log lines, several hundred
+/// times over a Next.js build, arriving in bursts every poll. That's a storm
+/// of main-thread work landing exactly while the user is watching the card
+/// animate. `(async)` keeps each body synchronous and moves it to the async
+/// runtime's blocking pool; the bodies hold no lock across an await (there are
+/// no awaits), so the futures stay `Send`.
 macro_rules! db_command {
     ($name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $method:ident($($fwd:expr),* $(,)?)) => {
-        #[tauri::command]
+        #[tauri::command(async)]
         pub fn $name(db: State<'_, Db>, $($arg: $ty),*) -> AppResult<$ret> {
             db.$method($($fwd),*)
         }
@@ -63,8 +73,8 @@ db_command!(db_set_deployment_vercel_ids(
     => set_deployment_vercel_ids(&id, &vercel_deployment_id, inspector_url.as_deref()));
 db_command!(db_set_project_team(id: String, team_id: Option<String>) -> ()
     => set_project_team(&id, team_id.as_deref()));
-db_command!(db_append_log(deployment_id: String, stream: String, line: String) -> ()
-    => append_log(&deployment_id, &stream, &line));
+db_command!(db_append_logs(deployment_id: String, lines: Vec<(String, String)>) -> ()
+    => append_logs(&deployment_id, &lines));
 db_command!(db_set_deployment_public_url(id: String, public_url: String) -> ()
     => set_deployment_public_url(&id, &public_url));
 db_command!(db_list_deployments(project_id: String, limit: Option<i64>) -> Vec<Deployment>
