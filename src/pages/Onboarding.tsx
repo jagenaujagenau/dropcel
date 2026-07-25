@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, FolderOpen, Loader2, Rocket, Triangle } from "lucide-react";
-import { TriangleField } from "../components/TriangleField";
 import { useDeviceSignIn } from "../components/useDeviceSignIn";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { describeAuthError } from "../core/account-session";
 import { accountStateAtom, authErrorAtom, refreshAuth, rootFolderAtom, useAtomState } from "../core/atoms";
 import * as ipc from "../lib/ipc";
+import { describeError } from "../lib/log";
 import { cn } from "../lib/utils";
 
 /**
@@ -66,13 +66,15 @@ function Welcome({ next }: { next: () => void }) {
   }).username;
   return (
     <div className="space-y-4 text-center">
-      <TriangleField className="mx-auto h-52 w-full" />
       <div className="space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">Welcome to Dropcel</h1>
+        {/* Matches the product's positioning: the promise is not a fast first
+            deploy (everyone has that) — it's that there is no deploy step at
+            all after the first drop. See README's "The job". */}
         <p className="text-sm leading-relaxed text-muted">
           Drop a project into a folder.
           <br />
-          Seconds later, it's live.
+          Then never deploy it again.
         </p>
         {authedAs && (
           <p className="inline-flex items-center gap-1.5 text-xs text-success">
@@ -93,15 +95,27 @@ function Connect() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  /**
+   * A failed token save has to say so. This is the fallback path — the user is
+   * here because sign-in already didn't work — and `void saveToken()` discards
+   * the rejection, so a keychain that refused the write (locked, denied) just
+   * stopped the spinner and changed nothing on screen. The user is left
+   * believing they're signed in, and every later deploy fails for a reason
+   * that points somewhere else entirely.
+   */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const authError = useAtomState(authErrorAtom, null);
   const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await ipc.credentials.setToken(token);
       setToken("");
       await refreshAuth();
+    } catch (err) {
+      setSaveError(`Could not save the token: ${describeError(err)}`);
     } finally {
       setSaving(false);
     }
@@ -151,7 +165,8 @@ function Connect() {
       )}
 
       {showPaste ? (
-        <div className="flex items-center gap-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
           <Input
             type="password"
             placeholder="Vercel access token (vercel.com → Account → Tokens)"
@@ -162,6 +177,10 @@ function Connect() {
           <Button size="sm" variant="secondary" disabled={!token || saving} onClick={() => void saveToken()}>
             Save
           </Button>
+          </div>
+          {saveError && (
+            <p className="text-[11px] leading-relaxed text-danger">{saveError}</p>
+          )}
         </div>
       ) : (
         <button
@@ -198,7 +217,7 @@ function Ready({ done }: { done: () => void }) {
       </div>
       <div className="space-y-2">
         <h2 className="text-lg font-semibold tracking-tight">Your folder is live</h2>
-        <p className="mx-auto max-w-sm text-xs leading-relaxed text-muted">
+        <p className="mx-auto max-w-sm text-pretty text-xs leading-relaxed text-muted">
           Anything you drop into{" "}
           <code className="rounded bg-surface px-1 py-0.5 text-foreground">{rootFolder}</code>{" "}
           deploys automatically.

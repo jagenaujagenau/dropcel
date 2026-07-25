@@ -56,6 +56,41 @@ export interface AppStateShape {
    */
   readonly upsertDeployment: (d: Deployment) => Effect.Effect<void>;
   readonly setDeployments: (projectId: string, list: Deployment[]) => Effect.Effect<void>;
+  /**
+   * Replace the projects list, but only if it actually differs.
+   *
+   * Every writer here re-reads the whole list from SQLite, so each one hands
+   * over a freshly-allocated array of freshly-allocated objects — never
+   * reference-equal to the last, even when nothing changed. `Dashboard` reads
+   * this list and renders a card per entry, so each write re-rendered every
+   * card in the app. That's frequent: `checkRemoteIntegration` and
+   * `refreshFramework` each do a `listProjects()` + set *per project* during a
+   * reconcile, so reconciling N projects produced N full-dashboard re-renders,
+   * almost all of them returning identical rows.
+   *
+   * The comparison is field-wise and shallow because `Project` is entirely
+   * primitives and nulls. Note this is the mirror image of the trick the
+   * per-project atoms in `atoms.ts` rely on: they preserve references on the
+   * *read* side, and this preserves them on the *write* side.
+   */
+  readonly setProjects: (list: Project[]) => Effect.Effect<void>;
+}
+
+/** Shallow field-wise equality — `Project` has no nested values. */
+function sameProject(a: Project, b: Project): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.path === b.path &&
+    a.framework === b.framework &&
+    a.vercelProjectId === b.vercelProjectId &&
+    a.autoDeploy === b.autoDeploy &&
+    a.createdAt === b.createdAt &&
+    a.updatedAt === b.updatedAt &&
+    a.lockedBranch === b.lockedBranch &&
+    a.remoteRepo === b.remoteRepo &&
+    a.teamId === b.teamId
+  );
 }
 
 export class AppState extends Context.Service<AppState, AppStateShape>()(
@@ -84,7 +119,17 @@ export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
         const next = idx >= 0 ? [...list.slice(0, idx), d, ...list.slice(idx + 1)] : [d, ...list];
         return { ...m, [d.projectId]: next };
       });
-      yield* SubscriptionRef.update(latestByProject, (m) => ({ ...m, [d.projectId]: d }));
+      yield* SubscriptionRef.update(latestByProject, (m) => {
+        const current = m[d.projectId];
+        // "Latest" has to mean newest-started, not last-written. Transitions
+        // arrive on independent, unordered fibers, so a straggling `canceled`
+        // for a superseded deployment could otherwise replace the in-flight
+        // one the user is actually watching — the card and tray would jump
+        // backwards to a finished older run. Comparing `startedAt` (RFC 3339
+        // UTC, so lexicographic order is chronological) keeps the newer one.
+        if (current && current.id !== d.id && current.startedAt > d.startedAt) return m;
+        return { ...m, [d.projectId]: d };
+      });
     });
 
   const setDeployments = (projectId: string, list: Deployment[]) =>
@@ -93,9 +138,17 @@ export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
       yield* SubscriptionRef.update(latestByProject, (m) => ({ ...m, [projectId]: list[0] }));
     });
 
+  const setProjects = (list: Project[]) =>
+    SubscriptionRef.update(projects, (current) =>
+      current.length === list.length && current.every((p, i) => sameProject(p, list[i]!))
+        ? current
+        : list,
+    );
+
   return AppState.of({
     route,
     projects,
+    setProjects,
     presentOnDisk,
     latestByProject,
     deploymentsByProject,

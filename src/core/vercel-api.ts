@@ -30,10 +30,38 @@ export class VercelApiError extends Schema.TaggedErrorClass<VercelApiError>()("V
   message: Schema.String,
   /** Extra payload, e.g. `missing` sha list on missing_files. */
   detail: Schema.Unknown,
+  /**
+   * How long the server told us to wait, from `Retry-After` on a 429.
+   *
+   * Vercel's rate limits are low enough on Hobby (60 deployments per 5
+   * minutes, 1 concurrent) that a folder-watcher will meet them in normal
+   * use — and the app's own retries add to the pressure. Retrying on a fixed
+   * 3s/6s backoff and then giving up turned a limit that clears in a minute
+   * into a visible deployment failure. Null whenever the header is absent or
+   * unparseable.
+   */
+  retryAfterMs: Schema.NullOr(Schema.Number),
 }) {
   get retryable(): boolean {
     return this.status === 429 || this.status >= 500 || this.status === 0;
   }
+}
+
+/**
+ * `Retry-After` is either a delay in seconds or an HTTP-date (RFC 9110).
+ * Returns null for anything else, and clamps to a sane ceiling so a bogus
+ * header can't park a deployment for hours.
+ */
+export function parseRetryAfter(header: string | undefined, now: number = Date.now()): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) ? Math.min(seconds, 3600) * 1000 : null;
+  }
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  return Math.min(Math.max(0, at - now), 3600_000);
 }
 
 // Tauri's fetch is fetch-compatible; hand it to the Effect platform layer.
@@ -79,7 +107,7 @@ function request(
     } else if (options.body !== undefined) {
       req = yield* HttpClientRequest.bodyJson(req, options.body).pipe(
         Effect.mapError(
-          (e) => new VercelApiError({ status: 0, code: "body", message: String(e), detail: null }),
+          (e) => new VercelApiError({ status: 0, code: "body", message: String(e), detail: null, retryAfterMs: null }),
         ),
       );
     }
@@ -92,15 +120,27 @@ function request(
             code: "network",
             message: `Could not reach the Vercel API: ${e.message}`,
             detail: null,
+            retryAfterMs: null,
           }),
       ),
     );
     const text = yield* res.text.pipe(
       Effect.mapError(
-        (e) => new VercelApiError({ status: res.status, code: "read", message: String(e), detail: null }),
+        (e) => new VercelApiError({ status: res.status, code: "read", message: String(e), detail: null, retryAfterMs: null }),
       ),
     );
-    const json: unknown = text ? JSON.parse(text) : null;
+    // Not every non-2xx body is JSON: a proxy 502, a Cloudflare interstitial
+    // or a truncated response is HTML, and a bare `JSON.parse` on it throws a
+    // *defect* — escaping the typed error channel entirely.
+    let json: unknown = null;
+    let parseFailed = false;
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        parseFailed = true;
+      }
+    }
     if (res.status >= 400) {
       const err = (json as VercelErrorBody)?.error;
       return yield* new VercelApiError({
@@ -108,6 +148,17 @@ function request(
         code: err?.code ?? null,
         message: err?.message ?? `Vercel API request failed (${res.status})`,
         detail: err ?? json,
+        retryAfterMs: parseRetryAfter(res.headers["retry-after"]),
+      });
+    }
+    if (parseFailed) {
+      return yield* new VercelApiError({
+        status: res.status,
+        code: "parse",
+        message: `Vercel returned a ${res.status} response that was not JSON.`,
+        detail: text.slice(0, 200),
+        // Almost always a transient gateway hiccup rather than a real 2xx.
+        retryAfterMs: null,
       });
     }
     return json;
@@ -144,7 +195,7 @@ export function parseTokenResponse(json: unknown, nowMs: number): OAuthTokens | 
 }
 
 const oauthError = (message: string) =>
-  new VercelApiError({ status: 0, code: "oauth", message, detail: null });
+  new VercelApiError({ status: 0, code: "oauth", message, detail: null, retryAfterMs: null });
 
 interface OpenIdConfig {
   token_endpoint?: string;

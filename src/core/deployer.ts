@@ -27,6 +27,9 @@ export interface DeployOutcome {
   /** Actionable, human-readable failure explanation. */
   error: string | null;
   retryable: boolean;
+  /** Server-directed wait before retrying, from a 429's `Retry-After`.
+   * When set, the queue uses it instead of its own exponential backoff. */
+  retryAfterMs?: number | null;
   /** Manifest digest of the content that was deployed (success only) —
    * feeds the skip-identical-auto-deploys guard. */
   contentDigest?: string | null;

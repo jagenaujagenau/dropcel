@@ -86,6 +86,25 @@ export interface QueueDeps {
     state: DeploymentState,
     info?: TransitionInfo,
   ) => Effect.Effect<void>;
+  /**
+   * Whether an unresolved account switch is currently blocking auto-deploys.
+   *
+   * `AutoDeployGate` checks this too, but it isn't the only way into
+   * `notifyChange`: `setOffline(false)`'s drain below and `composition`'s
+   * startup `drainPersistedDirty` both call it directly, and both used to
+   * sail straight past the account-switch hold. That's how a user could go
+   * offline with edits piled up, switch Vercel accounts, come back online,
+   * and have every held project deploy under the *new* account — precisely
+   * what the hold exists to prevent. Startup was worse: `drainPersistedDirty`
+   * runs before `refreshAuth()` has even resolved.
+   *
+   * Checking it here — beside the `offline` hold, at the one entry point every
+   * auto-deploy passes through — makes it unbypassable rather than something
+   * each new caller has to remember. Injected (rather than a
+   * `AccountSessionService` context requirement) to keep the queue
+   * independently testable; defaults to "nothing pending".
+   */
+  accountSwitchPending?: Effect.Effect<boolean>;
   debounceMs?: number;
   pipeline?: PipelineOptions;
 }
@@ -133,6 +152,10 @@ function executeDeployment(
   options: PipelineOptions,
 ): Effect.Effect<DeployOutcome> {
   let attemptNumber = req.attempt;
+  /** The most recent failure's server-directed wait, read by the schedule
+   * below. Held here because a `Schedule` sees its own output, not the error
+   * that triggered it. */
+  let lastRetryAfterMs: number | null = null;
 
   // suspend: each retry re-evaluates with the current attempt number.
   return Effect.suspend(() =>
@@ -140,6 +163,7 @@ function executeDeployment(
   ).pipe(
     Effect.tapError((f) =>
       Effect.sync(() => {
+        lastRetryAfterMs = f.outcome.retryAfterMs ?? null;
         // Only announce a retry when the policy will actually run one.
         if (f.outcome.retryable && attemptNumber - req.attempt < options.maxRetries) {
           attemptNumber += 1;
@@ -147,9 +171,28 @@ function executeDeployment(
         }
       }),
     ),
-    // v3's exponential ∩ recurs(n) ∩ whileInput(retryable), as v4 retry options.
+    /**
+     * Exponential backoff, except when the server told us how long to wait.
+     *
+     * Vercel answers a rate-limited request with `Retry-After`, and its Hobby
+     * limits (60 deployments per 5 minutes, 1 concurrent) are low enough that
+     * a folder-watcher meets them in ordinary use. Retrying on our own 3s/6s
+     * schedule then gave up well before the window cleared — turning a limit
+     * that resolves in a minute into a visible deployment failure, while the
+     * retries themselves added to the pressure. Deferring to the header is
+     * both more likely to succeed and better behaviour toward the API.
+     *
+     * `modifyDelay` rather than a separate schedule so the attempt *count*
+     * stays governed by `times` either way.
+     */
     Effect.retry({
-      schedule: Schedule.exponential(Duration.millis(options.baseDelayMs)),
+      schedule: Schedule.exponential(Duration.millis(options.baseDelayMs)).pipe(
+        Schedule.modifyDelay(({ duration }) =>
+          Effect.succeed(
+            lastRetryAfterMs != null ? Duration.millis(lastRetryAfterMs) : duration,
+          ),
+        ),
+      ),
       times: options.maxRetries,
       while: (f: DeployFailure) => f.outcome.retryable,
     }),
@@ -167,9 +210,30 @@ interface Slot {
   /** A change arrived mid-deployment → run once more when done. Production
    * always wins over preview when both are pending (see `mergeTarget`). */
   readonly pendingTarget: DeployTarget | null;
+  /**
+   * Whether anything pending was an *explicit* user request rather than a
+   * filesystem change.
+   *
+   * The target alone can't answer this: auto-deploys are production too
+   * ("folder = truth"), so `pendingTarget === "production"` says nothing about
+   * where the request came from. Without this flag the follow-up path treated
+   * every coalesced auto change as a manual production deploy and skipped the
+   * content-digest guard — meaning a save that landed mid-deploy always
+   * produced a second, byte-identical deployment, even though the guard exists
+   * precisely to prevent that (and the README promises it).
+   *
+   * Sticky once set: if a manual deploy and an auto change both coalesce, the
+   * manual one's "always redeploy" semantics win.
+   */
+  readonly pendingManual: boolean;
 }
 
-const emptySlot: Slot = { debounceFiber: null, active: null, pendingTarget: null };
+const emptySlot: Slot = {
+  debounceFiber: null,
+  active: null,
+  pendingTarget: null,
+  pendingManual: false,
+};
 
 const mergeTarget = (
   pending: DeployTarget | null,
@@ -285,15 +349,26 @@ export const make = (deps: QueueDeps) =>
         return next;
       });
 
-    /** Clears active + pendingTarget together, returning what was pending.
-     * No-ops (returns null) if the project was removed in the meantime. */
-    const takePendingAndClearActive = (projectId: string): Effect.Effect<DeployTarget | null> =>
+    /** Clears active + pending state together, returning what was pending
+     * (target, and whether any of it was an explicit user request).
+     * No-ops (returns a null target) if the project was removed meanwhile. */
+    const takePendingAndClearActive = (
+      projectId: string,
+    ): Effect.Effect<{ target: DeployTarget | null; manual: boolean }> =>
       Ref.modify(slots, (m) => {
         const existing = m.get(projectId);
-        if (!existing) return [null, m] as const;
+        if (!existing) return [{ target: null, manual: false }, m] as const;
         const next = new Map(m);
-        next.set(projectId, { ...existing, active: null, pendingTarget: null });
-        return [existing.pendingTarget, next] as const;
+        next.set(projectId, {
+          ...existing,
+          active: null,
+          pendingTarget: null,
+          pendingManual: false,
+        });
+        return [
+          { target: existing.pendingTarget, manual: existing.pendingManual },
+          next,
+        ] as const;
       });
 
     const forkInto = <A>(effect: Effect.Effect<A>): Effect.Effect<Fiber.Fiber<A>> =>
@@ -307,8 +382,17 @@ export const make = (deps: QueueDeps) =>
 
     // ---- deploy dispatch --------------------------------------------------
 
-    const enqueue: (projectId: string, target: DeployTarget) => Effect.Effect<void> =
-      Effect.fn("DeployQueue.enqueue")(function* (projectId, target) {
+    /** `manual` distinguishes an explicit user request (Redeploy, Deploy
+     * Preview) from a filesystem-driven one; see `Slot.pendingManual`. */
+    const enqueueWith: (
+      projectId: string,
+      target: DeployTarget,
+      manual: boolean,
+    ) => Effect.Effect<void> = Effect.fn("DeployQueue.enqueue")(function* (
+      projectId,
+      target,
+      manual,
+    ) {
         const project = yield* getProject(projectId);
         if (!project) {
           log.warn("queue", `cannot deploy unknown project ${projectId}`);
@@ -316,10 +400,13 @@ export const make = (deps: QueueDeps) =>
         }
         const slot = yield* ensureSlot(projectId);
         if (slot.active) {
-          // Coalesce: production wins over preview if both are requested.
+          // Coalesce: production wins over preview if both are requested, and
+          // a manual request anywhere in the burst keeps its bypass-the-guard
+          // semantics for the whole follow-up.
           yield* updateSlot(projectId, (s) => ({
             ...s,
             pendingTarget: mergeTarget(s.pendingTarget, target),
+            pendingManual: s.pendingManual || manual,
           }));
           return;
         }
@@ -331,6 +418,10 @@ export const make = (deps: QueueDeps) =>
         yield* updateSlot(projectId, (s) => ({ ...s, active: { fiber } }));
       });
 
+    /** The public entry point — always an explicit user request. */
+    const enqueue = (projectId: string, target: DeployTarget): Effect.Effect<void> =>
+      enqueueWith(projectId, target, true);
+
     /** Auto path: consult the skip guard (content unchanged → no deploy). A
      * guard failure must never block deploys. */
     const enqueueAutoUnlessSkipped: (projectId: string) => Effect.Effect<void> = Effect.fn(
@@ -338,8 +429,9 @@ export const make = (deps: QueueDeps) =>
     )(function* (projectId) {
       const skip = yield* shouldSkipAuto(projectId);
       if (skip) return;
-      // Folder = truth: what's in the folder IS production.
-      yield* enqueue(projectId, "production");
+      // Folder = truth: what's in the folder IS production — which is exactly
+      // why the target can't be used to tell this apart from a manual deploy.
+      yield* enqueueWith(projectId, "production", false);
     });
 
     /** One deployment run, with retries, from creation through a terminal
@@ -433,13 +525,16 @@ export const make = (deps: QueueDeps) =>
             if (Exit.hasInterrupts(exit)) setState("canceled");
 
             const pending = yield* takePendingAndClearActive(projectId);
-            if (pending === "production") {
-              // A change that arrived mid-deploy may already be included in
-              // what just shipped — the guard prevents an identical
-              // follow-up, but "production" pending bypasses it: an explicit
-              // production request always redeploys.
-              yield* enqueue(projectId, "production");
-            } else if (pending) {
+            if (!pending.target) return;
+            if (pending.manual) {
+              // An explicit user request always redeploys, guard or not —
+              // "Redeploy" that decides not to is a broken button.
+              yield* enqueueWith(projectId, pending.target, true);
+            } else {
+              // A change that arrived mid-deploy is very often already part of
+              // what just shipped (the manifest is collected *after* the
+              // debounce). The digest guard is what turns that into a no-op
+              // instead of a second, byte-identical deployment.
               yield* enqueueAutoUnlessSkipped(projectId);
             }
           }),
@@ -467,6 +562,14 @@ export const make = (deps: QueueDeps) =>
       if (yield* Ref.get(pausedRef)) return;
       const project = yield* getProject(projectId);
       if (!project || !project.autoDeploy) return;
+      // Checked before `offline` so a project freed by reconnecting can't slip
+      // through to a deploy under an account the user hasn't confirmed. If it
+      // is also offline, the offline hold gets marked on the re-drain after
+      // the switch resolves.
+      if (yield* deps.accountSwitchPending ?? Effect.succeed(false)) {
+        yield* held.mark(projectId, "account-switch");
+        return;
+      }
       if (yield* Ref.get(offlineRef)) {
         yield* held.mark(projectId, "offline");
         return;

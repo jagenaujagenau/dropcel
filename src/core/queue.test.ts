@@ -105,7 +105,7 @@ const pump = Effect.gen(function* () {
 
 const makeHarness = (
   script: Script,
-  deps: Partial<Pick<QueueDeps, "debounceMs" | "pipeline">> = {},
+  deps: Partial<Pick<QueueDeps, "debounceMs" | "pipeline" | "accountSwitchPending">> = {},
   options: {
     autoDeploy?: boolean;
     projectIds?: string[];
@@ -276,6 +276,45 @@ describe("DeployQueue", () => {
       }).pipe(Effect.provide(h.layer));
     });
 
+    /**
+     * The reconnect drain calls `notifyChange` directly, bypassing
+     * `AutoDeployGate` — so the account-switch hold has to be enforced by the
+     * queue itself. Without it: pile up edits offline, switch Vercel accounts,
+     * come back online, and every held project deploys under an account the
+     * user never confirmed.
+     */
+    it.effect("does not drain into a deploy while an account switch is unresolved", () => {
+      let switchPending = false;
+      const h = makeHarness(async () => ok(), {
+        debounceMs: 100,
+        accountSwitchPending: Effect.sync(() => switchPending),
+      });
+      return Effect.gen(function* () {
+        const queue = yield* DeployQueue;
+        yield* queue.setOffline(true);
+        yield* queue.notifyChange("p1");
+        yield* queue.notifyChange("p2");
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(h.calls.length).toBe(0);
+
+        // The switch is detected while the edits sit held offline.
+        switchPending = true;
+        yield* queue.setOffline(false);
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(h.calls.length).toBe(0);
+
+        // Resolving it releases them — one deploy per project, as usual.
+        switchPending = false;
+        yield* queue.notifyChange("p1");
+        yield* queue.notifyChange("p2");
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(h.calls.length).toBe(2);
+      }).pipe(Effect.provide(h.layer));
+    });
+
     it.effect("reports dirty-set changes for persistence, including the drain", () => {
       const snapshots: string[][] = [];
       const heldLayer = Layer.effect(
@@ -327,22 +366,68 @@ describe("DeployQueue", () => {
       }).pipe(Effect.provide(h.layer));
     });
 
-    it.effect("applies the guard to coalesced preview follow-ups", () => {
+    /**
+     * The follow-up path can't tell auto from manual by target alone — auto
+     * deploys are production too ("folder = truth"). It used to try, and so
+     * treated every coalesced save as a manual production deploy and skipped
+     * the guard: a save landing mid-deploy always produced a second,
+     * byte-identical deployment. These two pin both halves of the rule.
+     */
+    it.effect("guards an auto change that coalesced into a running deploy", () => {
       let release: (() => void) | null = null;
-      const h = makeHarness(async () => {
-        if (release === null) await new Promise<void>((r) => (release = r));
-        return ok();
-      });
+      const h = makeHarness(
+        async () => {
+          if (release === null) await new Promise<void>((r) => (release = r));
+          return ok();
+        },
+        { debounceMs: 100 },
+      );
       return Effect.gen(function* () {
         const queue = yield* DeployQueue;
-        yield* queue.enqueue("p1", "preview");
+        yield* queue.notifyChange("p1");
+        yield* TestClock.adjust("1 second");
         yield* settle;
-        // Change lands mid-deploy — but by completion it's already shipped.
-        yield* queue.enqueue("p1", "preview");
+        expect(h.calls.length).toBe(1);
+
+        // A save lands mid-deploy — but the manifest is collected after the
+        // debounce, so its content is already in what's shipping.
+        yield* queue.notifyChange("p1");
+        yield* TestClock.adjust("1 second");
+        yield* settle;
         h.digest.mode = true;
         release!();
         yield* settle;
+        yield* TestClock.adjust("1 second");
+        yield* settle;
         expect(h.calls.length).toBe(1);
+      }).pipe(Effect.provide(h.layer));
+    });
+
+    it.effect("a manual follow-up redeploys even when the content is unchanged", () => {
+      let release: (() => void) | null = null;
+      const h = makeHarness(
+        async () => {
+          if (release === null) await new Promise<void>((r) => (release = r));
+          return ok();
+        },
+        { debounceMs: 100 },
+      );
+      return Effect.gen(function* () {
+        const queue = yield* DeployQueue;
+        yield* queue.notifyChange("p1");
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(h.calls.length).toBe(1);
+
+        // "Redeploy" pressed mid-deploy. A Redeploy button that decides not
+        // to redeploy is a broken button, guard or no guard.
+        yield* queue.enqueue("p1", "production");
+        h.digest.mode = true;
+        release!();
+        yield* settle;
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(h.calls.length).toBe(2);
       }).pipe(Effect.provide(h.layer));
     });
 
@@ -419,6 +504,40 @@ describe("DeployQueue", () => {
       yield* queue.enqueue("p1", "preview");
       yield* pump;
       expect(attempts).toBe(3);
+      expect(h.transitions.at(-1)!.state).toBe("ready");
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /**
+   * Vercel answers a rate-limited deploy with `Retry-After`, and its Hobby
+   * limits (60 per 5 minutes, 1 concurrent) are low enough that a
+   * folder-watcher meets them normally. Backing off on our own short schedule
+   * gave up long before the window cleared — and added to the pressure.
+   */
+  it.effect("waits the server-directed Retry-After instead of its own backoff", () => {
+    let attempts = 0;
+    const h = makeHarness(
+      async () => {
+        attempts += 1;
+        return attempts === 1
+          ? { ...fail(true, "rate limited"), retryAfterMs: 60_000 }
+          : ok();
+      },
+      { pipeline: { maxRetries: 2, baseDelayMs: 1 } },
+    );
+    return Effect.gen(function* () {
+      const queue = yield* DeployQueue;
+      yield* queue.enqueue("p1", "preview");
+
+      // The queue's own backoff would have retried ~1ms in. It must not.
+      yield* TestClock.adjust("30 seconds");
+      yield* settle;
+      expect(attempts).toBe(1);
+
+      // Past the server's window, the retry runs and succeeds.
+      yield* TestClock.adjust("31 seconds");
+      yield* settle;
+      expect(attempts).toBe(2);
       expect(h.transitions.at(-1)!.state).toBe("ready");
     }).pipe(Effect.provide(h.layer));
   });

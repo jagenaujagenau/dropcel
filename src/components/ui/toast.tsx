@@ -34,6 +34,11 @@ export function Toast({
   return (
     <div
       style={style}
+      // Announced, not just shown: a copy confirmation or a drop-import result
+      // that only exists visually is invisible to a screen-reader user.
+      // "polite" so it never interrupts — none of these are urgent.
+      role="status"
+      aria-live="polite"
       onTransitionEnd={() => !visible && setRendered(null)}
       className={cn(
         "fixed bottom-4 right-4 max-w-sm whitespace-pre-line rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed shadow-2xl transition-opacity duration-200 ease-out motion-safe:transition-[opacity,transform]",

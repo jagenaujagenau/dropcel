@@ -22,7 +22,7 @@ import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { describeAuthError } from "../core/account-session";
 import { signOut } from "../core/auth";
-import { getLogPath } from "../lib/log";
+import { describeError, getLogPath } from "../lib/log";
 import {
   accountStateAtom,
   authErrorAtom,
@@ -141,15 +141,27 @@ function SignedOut() {
   const [showPaste, setShowPaste] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  /**
+   * A failed token save has to say so. This is the fallback path — the user is
+   * here because sign-in already didn't work — and `void saveToken()` discards
+   * the rejection, so a keychain that refused the write (locked, denied) just
+   * stopped the spinner and changed nothing on screen. The user is left
+   * believing they're signed in, and every later deploy fails for a reason
+   * that points somewhere else entirely.
+   */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const authError = useAtomState(authErrorAtom, null);
   const authErrorMessage = authError && describeAuthError(authError);
 
   const saveToken = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await ipc.credentials.setToken(token);
       setToken("");
       await refreshAuth();
+    } catch (err) {
+      setSaveError(`Could not save the token: ${describeError(err)}`);
     } finally {
       setSaving(false);
     }
@@ -188,7 +200,8 @@ function SignedOut() {
         </p>
       )}
       {showPaste ? (
-        <div className="flex items-center gap-2">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
           <Input
             type="password"
             placeholder="Vercel access token (vercel.com → Account → Tokens)"
@@ -199,6 +212,10 @@ function SignedOut() {
           <Button size="sm" variant="secondary" disabled={!token || saving} onClick={() => void saveToken()}>
             Save
           </Button>
+          </div>
+          {saveError && (
+            <p className="text-[11px] leading-relaxed text-danger">{saveError}</p>
+          )}
         </div>
       ) : (
         <button

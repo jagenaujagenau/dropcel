@@ -28,6 +28,23 @@ export interface PublicUrlInputs {
  * (shortest wins: the project domain is shorter than branch aliases) →
  * any alias → the deployment URL itself.
  */
+/**
+ * Whether this deployment actually holds a stable, shareable address — a
+ * verified custom domain or a non-ephemeral alias.
+ *
+ * A production deploy normally receives the project's alias the moment it goes
+ * READY. It does *not* after an Instant Rollback: Vercel disables
+ * auto-assignment of production domains once you roll back, so subsequent
+ * deployments build and succeed while the public URL keeps serving the older
+ * version you rolled back to. For a tool whose whole premise is that saving a
+ * file updates the site, "Ready" that isn't live is the worst state to report
+ * — so the caller uses this to tell the difference.
+ */
+export function hasStableAddress(inputs: PublicUrlInputs): boolean {
+  if (inputs.verifiedDomains.length > 0) return true;
+  return inputs.aliases.some((a) => !looksEphemeral(a));
+}
+
 export function choosePublicUrl(inputs: PublicUrlInputs): string {
   const { deploymentUrl, aliases, verifiedDomains } = inputs;
   if (verifiedDomains.length > 0) return `https://${verifiedDomains[0]}`;

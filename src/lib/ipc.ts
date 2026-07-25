@@ -69,8 +69,9 @@ export const db = {
     invoke<void>("db_set_deployment_vercel_ids", { id, vercelDeploymentId, inspectorUrl }),
   setProjectTeam: (id: string, teamId: string | null) =>
     invoke<void>("db_set_project_team", { id, teamId }),
-  appendLog: (deploymentId: string, stream: string, line: string) =>
-    invoke<void>("db_append_log", { deploymentId, stream, line }),
+  /** `lines` is a list of [stream, line] pairs, inserted in one transaction. */
+  appendLogs: (deploymentId: string, lines: [string, string][]) =>
+    invoke<void>("db_append_logs", { deploymentId, lines }),
   addDomain: (projectId: string, domain: string, verified: boolean) =>
     invoke<void>("db_add_domain", { projectId, domain, verified }),
   setDomainVerified: (domain: string, verified: boolean) =>
@@ -131,6 +132,8 @@ export interface DeployFileEntry {
 export interface DeployManifest {
   files: DeployFileEntry[];
   digest: string;
+  /** Credential-looking files left out of the upload — see files.rs's `walk`. */
+  skippedSensitive: string[];
 }
 
 export const files = {

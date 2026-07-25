@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
@@ -6,13 +6,17 @@ import {
   FolderOpen,
   Loader2,
   Pause,
+  Search,
   Settings as SettingsIcon,
   Triangle,
   WifiOff,
 } from "lucide-react";
+import { CommandPalette } from "./components/CommandPalette";
 import { DropZone } from "./components/DropZone";
+import { LogViewerDialog } from "./components/LogViewerDialog";
 import { UserAvatar } from "./components/UserAvatar";
 import { Button } from "./components/ui/button";
+import type { Deployment } from "./core/types";
 import {
   accountStateAtom,
   installUpdateAndRelaunch,
@@ -80,18 +84,54 @@ export default function App() {
   const authedAs = accountState.username;
   const accountSwitch = accountState.pendingSwitch;
   const onboarded = useAtomState(onboardedAtom, null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteLogs, setPaletteLogs] = useState<{ deployment: Deployment; name: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     startApp();
   }, []);
 
+  /**
+   * The app's global shortcuts. Registered on `window` rather than a focused
+   * element so they work wherever the user is — including with focus inside
+   * the search field, which is the whole point of ⌘K. Both are modifier
+   * combos, so they can't collide with typing.
+   *
+   * Held back until onboarding is done: neither target exists yet, and the
+   * palette over the welcome flow would be a dead end.
+   */
+  useEffect(() => {
+    if (!onboarded) return;
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (e.key === ",") {
+        e.preventDefault();
+        setRoute({ name: "settings" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onboarded]);
+
+  const onPaletteViewLogs = useCallback((deployment: Deployment, name: string) => {
+    setPaletteLogs({ deployment, name });
+  }, []);
+
   if (onboarded === null) {
-    return <div className="titlebar-drag h-full" />;
+    // Draggable while loading too — otherwise the window is pinned in place
+    // for however long startup takes.
+    return <div data-tauri-drag-region className="h-full" />;
   }
   if (!onboarded) {
     return (
       <div className="h-full">
-        <div className="titlebar-drag absolute inset-x-0 top-0 h-8" />
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-8" />
         <Onboarding
           onDone={() => {
             void ipc.db.setSetting("onboarded", "1");
@@ -105,9 +145,21 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
-      <header className="titlebar-drag flex items-center gap-3 border-b border-border px-4 pb-3 pt-9">
-        <Triangle className="h-3.5 w-3.5 fill-foreground" />
-        <span className="text-[13px] font-semibold tracking-tight">Dropcel</span>
+      {/*
+        `data-tauri-drag-region` is what makes the window movable — the titlebar
+        is hidden (see tauri.conf.json), so this strip is the only thing left to
+        grab. It has to be repeated on the logo and wordmark because Tauri
+        matches the event target itself: a mousedown that lands on a child
+        without the attribute is not a drag.
+      */}
+      <header
+        data-tauri-drag-region
+        className="flex items-center gap-3 border-b border-border px-4 pb-3 pt-9"
+      >
+        <Triangle data-tauri-drag-region className="h-3.5 w-3.5 fill-foreground" />
+        <span data-tauri-drag-region className="text-[13px] font-semibold tracking-tight">
+          Dropcel
+        </span>
         {watchPaused && (
           <span className="flex items-center gap-1 text-[11px] text-warning">
             <Pause className="h-3 w-3" /> paused
@@ -123,6 +175,16 @@ export default function App() {
         )}
         <UpdatePill status={updateStatus} />
         <div className="ml-auto flex items-center gap-1">
+          {/* The palette is keyboard-first, but a shortcut nobody knows about
+              may as well not exist — this is its discovery surface. */}
+          <button
+            onClick={() => setPaletteOpen(true)}
+            title="Search projects and actions"
+            className="mr-1 flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11px] text-faint transition-colors hover:border-border-hover hover:text-muted"
+          >
+            <Search className="h-3 w-3" />
+            <kbd className="font-sans">⌘K</kbd>
+          </button>
           {authedAs && (
             <span className="mr-1 flex items-center gap-1.5 text-[11px] text-faint">
               <UserAvatar />
@@ -184,6 +246,19 @@ export default function App() {
       </main>
 
       <DropZone />
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onViewLogs={onPaletteViewLogs}
+      />
+      {paletteLogs && (
+        <LogViewerDialog
+          deploymentId={paletteLogs.deployment.id}
+          projectName={paletteLogs.name}
+          onClose={() => setPaletteLogs(null)}
+        />
+      )}
     </div>
   );
 }

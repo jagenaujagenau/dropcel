@@ -123,6 +123,36 @@ export const authErrorAtom = Atom.map(accountStateAtom, (r) =>
 // call sites below.)
 
 const latestByProjectRaw = Atom.subscriptionRef(appStateShape.latestByProject);
+/**
+ * Every project's latest deployment in one read. The per-project family below
+ * is the right tool for a card that renders one project; this is for the
+ * command palette, which builds URL/log/redeploy actions for *all* projects in
+ * a single pass and would otherwise need a hook per project. Re-rendering on
+ * any project's change is correct for that consumer — and it's only mounted
+ * while the palette is open.
+ */
+export const latestByProjectAtom = latestByProjectRaw;
+/**
+ * Project ids ordered by most recent deployment, newest first, joined into one
+ * delimited string.
+ *
+ * A string, not an array, and that is the whole point. The dashboard has to
+ * subscribe to something derived from the *whole* map in order to sort by
+ * recency, and `Atom.map`'s registry node compares with `Object.is` — a
+ * freshly-allocated array would differ on every emission and re-render the
+ * entire grid on every deployment tick, which is exactly the whole-map
+ * re-render the family atoms above exist to avoid. A primitive compares by
+ * value, so the grid re-renders only when the order genuinely changes.
+ *
+ * Projects with no deployment are absent; the caller ranks them last.
+ */
+export const projectOrderAtom = Atom.map(latestByProjectRaw, (m) =>
+  Object.entries(m)
+    .filter(([, d]) => d !== undefined)
+    .sort(([, a], [, b]) => Date.parse(b!.startedAt) - Date.parse(a!.startedAt))
+    .map(([id]) => id)
+    .join(","),
+);
 /** One project's latest deployment. Read with `useAtomValue` — this is a
  * plain synchronous value, not `AsyncResult`-wrapped (see block comment
  * above), so `useAtomState`'s fallback machinery doesn't apply here. */
@@ -189,7 +219,7 @@ export function setThemeLocal(theme: Theme): void {
 }
 
 export function setProjectsLocal(projects: Project[]): void {
-  Effect.runSync(SubscriptionRef.set(appStateShape.projects, projects));
+  Effect.runSync(appStateShape.setProjects(projects));
 }
 
 export {

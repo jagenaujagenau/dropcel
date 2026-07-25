@@ -1,4 +1,5 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -98,7 +99,7 @@ const accountSessionHooks: AccountSessionHooks = {
   },
   reloadProjects: async () => {
     const projects = await ipc.db.listProjects();
-    Effect.runSync(SubscriptionRef.set(appStateShape.projects, projects));
+    Effect.runSync(appStateShape.setProjects(projects));
   },
   onSwitchResolved: () => {
     managedRuntime.runFork(
@@ -136,7 +137,7 @@ const trayShape: TrayShape = {
 };
 
 const reconcilerHooks: ReconcilerHooks = {
-  setProjects: (projects) => Effect.runSync(SubscriptionRef.set(appStateShape.projects, projects)),
+  setProjects: (projects) => Effect.runSync(appStateShape.setProjects(projects)),
   setPresentOnDisk: (names) =>
     Effect.runSync(SubscriptionRef.set(appStateShape.presentOnDisk, new Set(names))),
   getProjects: () => Effect.runSync(SubscriptionRef.get(appStateShape.projects)),
@@ -154,6 +155,41 @@ const reconcilerShape = Effect.runSync(
   Effect.provideService(reconcilerMake(reconcilerHooks), Ipc, ipcShape),
 );
 
+// ---- build-log buffering ---------------------------------------------
+//
+// The deployer emits one `onLog` call per line, and lines arrive in bursts:
+// each build poll returns everything since the last one, which for a Next.js
+// build is dozens of lines at a time and several hundred overall. Writing each
+// one straight through cost an IPC round trip and a separate transaction per
+// line, all landing while the user is watching the deployment card.
+//
+// The burst is delivered synchronously (api-deployer loops over the poll's
+// events), so a microtask is enough to coalesce a whole poll's worth into one
+// batched insert — no timer, and no added latency worth measuring: the buffer
+// is drained before anything can observe it, including the log viewer.
+
+const logBuffer = new Map<string, [string, string][]>();
+let logFlushScheduled = false;
+
+function flushLogBuffer(): void {
+  logFlushScheduled = false;
+  const batches = [...logBuffer];
+  logBuffer.clear();
+  for (const [deploymentId, lines] of batches) {
+    void ipc.db.appendLogs(deploymentId, lines).catch(() => {});
+  }
+}
+
+function bufferLogLine(deploymentId: string, stream: "stdout" | "stderr", line: string): void {
+  const existing = logBuffer.get(deploymentId);
+  if (existing) existing.push([stream, line]);
+  else logBuffer.set(deploymentId, [[stream, line]]);
+  if (!logFlushScheduled) {
+    logFlushScheduled = true;
+    queueMicrotask(flushLogBuffer);
+  }
+}
+
 // ---- queue deps -------------------------------------------------------
 
 const queueDeps: QueueDeps = {
@@ -170,13 +206,14 @@ const queueDeps: QueueDeps = {
     collectFiles: ipc.files.collectDeployFiles,
     readFile: async (project: string, path: string) =>
       base64ToBytes(await ipc.files.readFileB64(project, path)),
-    onLog: (deploymentId: string, stream: "stdout" | "stderr", line: string) => {
-      void ipc.db.appendLog(deploymentId, stream, line).catch(() => {});
-    },
+    onLog: bufferLogLine,
     onCreated: (ourDeploymentId: string, info: RecordVercelIdsInfo) => {
       managedRuntime.runFork(Effect.andThen(ReadyEffects, (r) => r.recordVercelIds(ourDeploymentId, info)));
     },
   }),
+  accountSwitchPending: SubscriptionRef.get(accountSessionShape.state).pipe(
+    Effect.map((s) => s.pendingSwitch !== null),
+  ),
   debounceMs: 2_000,
   // `ReadyEffects` lives behind `Context` (it needs `Notifier`/`Connectivity`,
   // which only resolve through `managedRuntime`'s async construction), so
@@ -252,11 +289,35 @@ export const AppLive: Layer.Layer<
   readyEffectsLayerResolved,
   autoDeployGateLayerResolved,
   watchStreamLayer({
-    // The reconciler's own `Reconciler` class instance is already
-    // constructed (`reconcilerShape` closes over it); errors are swallowed
-    // exactly as the old Promise bridge did (a rejected promise there
-    // would have defected the fiber, never surfaced as a typed failure).
-    onChanges: (changes) => Effect.orDie(reconcilerShape.handleFsChanges(changes)),
+    /**
+     * One bad batch must not end the watcher.
+     *
+     * This was `Effect.orDie`, on the reasoning that it matched the old
+     * Promise bridge's behaviour — but `orDie` doesn't swallow anything, it
+     * promotes a typed failure into a defect, and the defect killed the
+     * `Stream.runForEach` fiber that *is* the fs-event pump. `handleFsChanges`
+     * fails with a typed `IpcError` on any transient DB or fs hiccup, so a
+     * single one of those permanently stopped the app from watching the
+     * folder: `WatchStream`'s `running` ref still held the now-dead fiber, so
+     * `start` was a no-op, and the closing stream scope unregistered the Tauri
+     * listener on the way out. Nothing surfaced in the UI — files just quietly
+     * stopped deploying until the next relaunch.
+     *
+     * `catchCause` (not `catchAll`) so an unexpected throw inside the
+     * reconciler is contained on the same terms as a typed failure. Dropping
+     * one batch costs at most a delayed deploy, and the next fs event — or any
+     * manual rescan — reconciles the folder from scratch anyway, since
+     * reconcile compares against the *current* directory listing rather than
+     * replaying history.
+     */
+    onChanges: (changes) =>
+      reconcilerShape.handleFsChanges(changes).pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() => {
+            log.error("reconciler", `dropped one fs batch: ${Cause.pretty(cause)}`);
+          }),
+        ),
+      ),
   }),
 );
 
@@ -317,7 +378,7 @@ export async function purgeProject(projectId: string): Promise<void> {
   managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.remove(projectId)));
   await ipc.snapshots.delete(projectId).catch(() => {});
   await ipc.db.deleteProject(projectId);
-  Effect.runSync(SubscriptionRef.set(appStateShape.projects, await ipc.db.listProjects()));
+  Effect.runSync(appStateShape.setProjects(await ipc.db.listProjects()));
   await refreshTray();
 }
 
@@ -363,18 +424,44 @@ async function drainPersistedDirty(): Promise<void> {
 }
 
 /**
- * Startup sequencing — forked once by `App.tsx`: auth check, watcher start,
- * initial reconcile, tray refresh, in that order.
+ * Runs one startup step, converting failure into a logged warning.
+ *
+ * Startup is a sequence of largely independent steps, and it used to be one
+ * unbroken `await` chain — so a single rejection meant every step *after* it
+ * silently never ran. `reconcile(true)` alone can fail for mundane reasons (an
+ * unmounted external drive making `scan_projects` fail, a macOS TCC denial on
+ * the folder, a locked database), and when it did, the watcher never started,
+ * connectivity was never established, and held changes never drained. Since
+ * `started` is already latched by then, nothing retried short of relaunching
+ * the app — it just sat there showing an empty dashboard and never watching
+ * the folder again.
+ *
+ * Losing one step is survivable. Losing the watcher is losing the app.
+ */
+async function step(name: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    log.error("composition", `startup step "${name}" failed: ${describeError(err)}`);
+  }
+}
+
+/**
+ * Startup sequencing — forked once by `App.tsx`: settings, auth check, initial
+ * reconcile, watcher start, tray refresh, in that order. Every step past the
+ * settings load is independently fallible; see `step`.
  */
 async function main(): Promise<void> {
-  // Notification permission (macOS prompts once) — mounting Notifier runs it.
-  await managedRuntime.runPromise(Notifier);
-
+  // Defaults rather than a rejection: `App.tsx` renders nothing at all until
+  // `onboarded` settles, so letting this throw would leave a permanently
+  // blank window — the one failure mode with no visible explanation and no
+  // way out. Falling back shows the onboarding flow, which is both honest
+  // about the state and somewhere the user can act.
   const [root, paused, onboarded, storedTheme] = await Promise.all([
-    ipc.fs.getRootFolder(),
-    ipc.fs.getWatchPaused(),
-    ipc.db.getSetting("onboarded"),
-    ipc.db.getSetting("theme"),
+    ipc.fs.getRootFolder().catch(() => ""),
+    ipc.fs.getWatchPaused().catch(() => false),
+    ipc.db.getSetting("onboarded").catch(() => null),
+    ipc.db.getSetting("theme").catch(() => null),
   ]);
   Effect.runSync(SubscriptionRef.set(appStateShape.rootFolder, root));
   Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, paused));
@@ -385,7 +472,18 @@ async function main(): Promise<void> {
   // paint — see main.tsx) with the database's value, in case they differ.
   applyTheme(theme);
   cacheTheme(theme);
-  await managedRuntime.runPromise(Effect.andThen(DeployQueue, (q) => q.setPaused(paused)));
+
+  // Notification permission (macOS prompts once) — mounting Notifier runs it.
+  // Forked, never awaited: this used to be the first line of `main`, ahead of
+  // the `onboarded` write above, and `App.tsx` renders a blank titlebar until
+  // `onboarded` settles. That meant first launch showed an *empty window*
+  // until the user answered the system permission dialog. Nothing in startup
+  // needs the permission result.
+  managedRuntime.runFork(Notifier);
+
+  await step("queue pause state", () =>
+    managedRuntime.runPromise(Effect.andThen(DeployQueue, (q) => q.setPaused(paused))),
+  );
 
   // Who is signed in? (keychain token against the REST API.)
   void refreshAuth();
@@ -393,44 +491,51 @@ async function main(): Promise<void> {
   // deployNew: projects that appeared while the app was closed should go
   // live on launch — folder = truth. The digest guard skips anything whose
   // content already matches its last successful deploy.
-  await reconcile(true);
+  await step("initial reconcile", () => reconcile(true));
 
   // Hydrate latest deployment + stored snapshot per project — one IPC round
   // trip regardless of project count (see screenshot.rs's get_snapshots_batch).
-  const latest = await ipc.db.latestDeployments();
-  for (const d of latest) Effect.runSync(appStateShape.upsertDeployment(d));
-  const projectIds = Effect.runSync(SubscriptionRef.get(appStateShape.projects)).map((p) => p.id);
-  if (projectIds.length > 0) {
-    await ipc.snapshots
-      .getBatch(projectIds)
-      .then((snaps) =>
-        Effect.runSync(
-          SubscriptionRef.update(appStateShape.snapshotByProject, (m) => {
-            const next = { ...m };
-            for (const [id, s] of Object.entries(snaps)) next[id] = s.dataUrl;
-            return next;
-          }),
-        ),
-      )
-      .catch(() => {});
-  }
-  await refreshTray();
+  await step("hydrate deployments", async () => {
+    const latest = await ipc.db.latestDeployments();
+    for (const d of latest) Effect.runSync(appStateShape.upsertDeployment(d));
+  });
+  await step("hydrate snapshots", async () => {
+    const projectIds = Effect.runSync(SubscriptionRef.get(appStateShape.projects)).map((p) => p.id);
+    if (projectIds.length === 0) return;
+    const snaps = await ipc.snapshots.getBatch(projectIds);
+    Effect.runSync(
+      SubscriptionRef.update(appStateShape.snapshotByProject, (m) => {
+        const next = { ...m };
+        for (const [id, s] of Object.entries(snaps)) next[id] = s.dataUrl;
+        return next;
+      }),
+    );
+  });
+  await step("tray refresh", () => refreshTray());
 
-  // Wire native events.
-  await managedRuntime.runPromise(Effect.andThen(WatchStream, (w) => w.start));
-  await ipc.events.onWatcherPaused((p) => {
-    Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, p));
-    managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.setPaused(p)));
+  // Wire native events. The watcher is the single most important thing to get
+  // running — every step above is guarded precisely so a failure there can't
+  // stop execution from reaching this line.
+  await step("watch stream", () =>
+    managedRuntime.runPromise(Effect.andThen(WatchStream, (w) => w.start)),
+  );
+  await step("event listeners", async () => {
+    await ipc.events.onWatcherPaused((p) => {
+      Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, p));
+      managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.setPaused(p)));
+    });
+    await ipc.events.onTrayOpenProject(() => {
+      Effect.runSync(SubscriptionRef.set(appStateShape.route, { name: "dashboard" } as const));
+    });
+    await ipc.events.onWatcherError((msg) => log.error("watcher", msg));
   });
-  await ipc.events.onTrayOpenProject(() => {
-    Effect.runSync(SubscriptionRef.set(appStateShape.route, { name: "dashboard" } as const));
-  });
-  await ipc.events.onWatcherError((msg) => log.error("watcher", msg));
 
   // Establish connectivity BEFORE draining held changes — draining while
   // actually offline would just re-hold them (harmless), but draining after
   // the state is known avoids doomed deploys on flaky startups.
-  await managedRuntime.runPromise(Effect.andThen(Connectivity, (c) => c.start));
+  await step("connectivity", () =>
+    managedRuntime.runPromise(Effect.andThen(Connectivity, (c) => c.start)),
+  );
   await drainPersistedDirty();
 
   // Forked, not awaited: the update check must never delay startup, and a
@@ -447,5 +552,11 @@ let started = false;
 export function start(): void {
   if (started) return;
   started = true;
-  void main();
+  // Every step inside `main` is individually guarded, so this should be
+  // unreachable — but `started` is latched above and an unhandled rejection
+  // here would be a silent dead app, so it gets a last-resort log rather than
+  // vanishing into the console.
+  void main().catch((err) => {
+    log.error("composition", `startup aborted: ${describeError(err)}`);
+  });
 }

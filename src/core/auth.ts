@@ -1,4 +1,5 @@
 import * as ipc from "../lib/ipc";
+import { describeError, log } from "../lib/log";
 import { activeSessionToken } from "./account-session";
 import * as api from "./vercel-api";
 
@@ -24,7 +25,30 @@ async function persistSession(
   expiresAtMs: number | null,
 ): Promise<void> {
   await ipc.credentials.setToken(token);
-  if (refreshToken) await ipc.credentials.setRefreshToken(refreshToken).catch(() => {});
+  if (refreshToken) {
+    try {
+      await ipc.credentials.setRefreshToken(refreshToken);
+    } catch (err) {
+      /**
+       * Vercel rotates refresh tokens: the one we just spent is dead, and
+       * `refreshToken` is its only replacement. Swallowing this write failure
+       * left the *spent* token sitting in the keychain, so every later refresh
+       * got a 4xx, classified as `revoked`, and signed the user out with "Your
+       * access was revoked" — for what was really a transient keychain error.
+       *
+       * Deleting it instead degrades to `no-refresh-token`, which is both true
+       * (we genuinely have no usable refresh token) and the branch that asks
+       * the user to sign in again rather than accusing Vercel of revoking
+       * them. Still non-fatal: the access token above was stored fine and
+       * keeps working until it expires.
+       */
+      log.warn(
+        "auth",
+        `could not store the rotated refresh token, clearing the spent one: ${describeError(err)}`,
+      );
+      await ipc.credentials.deleteRefreshToken().catch(() => {});
+    }
+  }
   if (expiresAtMs != null) {
     await ipc.db.setSetting(EXPIRES_AT_SETTING, String(expiresAtMs)).catch(() => {});
   } else {

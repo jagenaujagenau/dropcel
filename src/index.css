@@ -61,11 +61,94 @@
   --vbg-border-strong: var(--vbg-gray-alpha-700);
   --vbg-color-success: var(--vbg-green-900);
   --vbg-color-warning: var(--vbg-amber-900);
-  --vbg-color-error: var(--vbg-red-700);
+  /*
+   * Light-mode text contrast, corrected at the *semantic* layer so the
+   * vendored brand scale above stays verbatim.
+   *
+   * Measured against WCAG AA (4.5:1 for normal text — and nearly all text
+   * here is 11-13px, so "normal" is the right bar, not the 3:1 large-text
+   * one). On the light surface, `--vbg-red-700` scored **3.86** and
+   * `--vbg-gray-800` **3.93**: both fail, and `red-700` is what error
+   * messages are rendered in — the text that can least afford to be hard to
+   * read. Dark mode already passes (5.28 / 5.11) and is left alone.
+   *
+   * Note the vendored set maps success and warning to the *-900* step but
+   * error to *-700*; nudging the light value to L 0.57 puts it beside
+   * green-900 (0.5175) and amber-900 (0.5279), which is where it belongs.
+   * Hue and chroma are unchanged, so it still reads as the same red.
+   */
+  --vbg-color-error: light-dark(oklch(57% 0.2524 23.03), var(--vbg-red-700));
+  --vbg-text-faint: light-dark(oklch(0.55 0 0), var(--vbg-gray-800));
   --vbg-focus: light-dark(var(--vbg-blue-700), var(--vbg-blue-900));
 
   --vbg-radius-small: 6px;
   --vbg-radius: 8px;
+
+  /*
+   * Per-framework accent hues. A project card tints itself with its
+   * framework's accent, so a folder is recognisable by colour before the name
+   * is read.
+   *
+   * Each is a light-dark() pair rather than one value, because the accent is
+   * used for card TITLE text as well as for the icon chip. A single mid-tone
+   * that reads on white is far too dark on the near-black dark surface: the
+   * light values sit around L 0.45-0.52 and the dark ones around L 0.78-0.84,
+   * with hue and chroma held constant so it stays the same colour either way.
+   * All of them are covered by src/lib/contrast.test.ts against both
+   * backgrounds — see the note there about why that matters here.
+   *
+   * Frameworks whose branding is monochrome (Next, Express, plain static)
+   * deliberately get a near-neutral accent instead of an invented colour.
+   */
+  --fw-nextjs: light-dark(oklch(38% 0.012 265), oklch(84% 0.008 265));
+  --fw-react: light-dark(oklch(48% 0.115 231), oklch(80% 0.105 231));
+  --fw-vue: light-dark(oklch(48% 0.125 155), oklch(80% 0.135 155));
+  --fw-nuxt: light-dark(oklch(47% 0.135 158), oklch(81% 0.155 158));
+  --fw-svelte: light-dark(oklch(51% 0.185 35), oklch(78% 0.145 35));
+  --fw-astro: light-dark(oklch(48% 0.165 305), oklch(80% 0.125 305));
+  --fw-remix: light-dark(oklch(48% 0.135 250), oklch(80% 0.115 250));
+  --fw-vite: light-dark(oklch(49% 0.175 290), oklch(80% 0.135 290));
+  --fw-hono: light-dark(oklch(50% 0.145 48), oklch(80% 0.125 48));
+  --fw-express: light-dark(oklch(42% 0.015 265), oklch(82% 0.010 265));
+  --fw-static: light-dark(oklch(45% 0.055 220), oklch(81% 0.045 220));
+  --fw-unknown: light-dark(oklch(45% 0.010 265), oklch(80% 0.008 265));
+
+  /*
+   * Chip gradients: two stops per framework, taken from the brand's own hue.
+   * The logo is knocked out to pure white on top of these, so unlike the
+   * --fw-* accents above these do NOT flip with the theme — a white mark needs
+   * a dark plate in both, and a chip that inverted would leave the logo
+   * invisible in one of them.
+   *
+   * Every stop is held at or below oklch L 0.62. White against a graphical
+   * object needs 3:1 (WCAG non-text contrast), which is roughly where that
+   * lightness lands; src/lib/contrast.test.ts checks both stops of all twelve
+   * so a hand-picked hue can't quietly drift over the line.
+   */
+  --fwc-nextjs-a: oklch(22% 0.000 0);
+  --fwc-nextjs-b: oklch(38% 0.000 0);
+  --fwc-react-a: oklch(48% 0.090 216);
+  --fwc-react-b: oklch(60% 0.100 216);
+  --fwc-vue-a: oklch(46% 0.100 160);
+  --fwc-vue-b: oklch(60% 0.130 160);
+  --fwc-nuxt-a: oklch(48% 0.130 158);
+  --fwc-nuxt-b: oklch(61% 0.160 158);
+  --fwc-svelte-a: oklch(48% 0.190 34);
+  --fwc-svelte-b: oklch(60% 0.220 34);
+  --fwc-astro-a: oklch(44% 0.190 300);
+  --fwc-astro-b: oklch(58% 0.200 305);
+  --fwc-remix-a: oklch(30% 0.020 250);
+  --fwc-remix-b: oklch(55% 0.170 250);
+  --fwc-vite-a: oklch(48% 0.190 285);
+  --fwc-vite-b: oklch(60% 0.170 300);
+  --fwc-hono-a: oklch(50% 0.140 48);
+  --fwc-hono-b: oklch(61% 0.160 55);
+  --fwc-express-a: oklch(26% 0.005 265);
+  --fwc-express-b: oklch(42% 0.005 265);
+  --fwc-static-a: oklch(42% 0.030 250);
+  --fwc-static-b: oklch(56% 0.040 250);
+  --fwc-unknown-a: oklch(40% 0.010 265);
+  --fwc-unknown-b: oklch(54% 0.010 265);
 }
 
 @theme {
@@ -80,7 +163,7 @@
   --color-border-hover: var(--vbg-gray-alpha-500);
   --color-foreground: var(--vbg-text-primary);
   --color-muted: var(--vbg-text-secondary);
-  --color-faint: var(--vbg-gray-800);
+  --color-faint: var(--vbg-text-faint);
   --color-accent: var(--vbg-gray-1000);
   --color-accent-foreground: var(--vbg-background-100);
   --color-success: var(--vbg-color-success);
@@ -112,19 +195,33 @@ body,
 body {
   @apply bg-background text-foreground antialiased select-none;
   font-family: var(--font-sans);
+  /* Only 400/500/600 sans and 400 mono are loaded (see main.tsx). Without
+     this, a component reaching for a weight that isn't there gets a
+     browser-synthesized approximation — which looks almost right, so nobody
+     notices the real file is missing. Fail visibly instead. */
+  font-synthesis: none;
   /* --vbg-type-label; app chrome is dense UI */
   font-size: 0.8125rem;
   line-height: 18px;
 }
 
 /* macOS overlay titlebar: make the top strip draggable */
-.titlebar-drag {
-  -webkit-app-region: drag;
-}
-.titlebar-drag button,
-.titlebar-drag a {
-  -webkit-app-region: no-drag;
-}
+/*
+ * Window dragging is done with Tauri's `data-tauri-drag-region` attribute, not
+ * CSS. This block used to be:
+ *
+ *   .titlebar-drag { -webkit-app-region: drag; }
+ *
+ * which is an Electron/Chromium property and a silent no-op in WKWebView — the
+ * webview Tauri uses on macOS. Combined with `titleBarStyle: "Overlay"` and
+ * `hiddenTitle` (there is no native bar left to grab), the window could not be
+ * moved at all. The attribute also needs `core:window:allow-start-dragging` in
+ * capabilities/default.json: it is NOT part of `core:default`, whose window set
+ * is read-only queries plus internal-toggle-maximize.
+ *
+ * Tauri matches on the event target, so interactive children are excluded for
+ * free — no `no-drag` counterpart is needed.
+ */
 
 ::-webkit-scrollbar {
   width: 8px;

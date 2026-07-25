@@ -9,7 +9,7 @@ import { AppState, type AppStateShape } from "./app-state";
 import { checkGitConnection } from "./deployment-actions";
 import { Clipboard, Connectivity, Notifier, Tray } from "./effects";
 import { Ipc, type IpcShape } from "./ipc";
-import { choosePublicUrl } from "./public-url";
+import { choosePublicUrl, hasStableAddress } from "./public-url";
 import type { TransitionInfo } from "./queue";
 import type { Deployment, DeploymentState } from "./types";
 import * as api from "./vercel-api";
@@ -136,7 +136,7 @@ export const make = (deps: {
     const resolvePublicUrl = (
       projectId: string,
       deployment: Deployment,
-    ): Effect.Effect<string> =>
+    ): Effect.Effect<{ url: string; stable: boolean }> =>
       Effect.fn("ReadyEffects.resolvePublicUrl")(function* () {
         const deploymentUrl = deployment.url ?? "";
         const project = (yield* SubscriptionRef.get(appState.projects)).find(
@@ -154,12 +154,17 @@ export const make = (deps: {
           ).pipe(Effect.catch(() => Effect.succeed(null)));
           if (fresh) aliases = fresh.aliases;
         }
-        return choosePublicUrl({
+        const inputs = {
           deploymentUrl,
           aliases,
           verifiedDomains: domains.filter((d) => d.verified).map((d) => d.domain),
-        });
-      })().pipe(Effect.catch(() => Effect.succeed(deployment.url ?? "")));
+        };
+        return { url: choosePublicUrl(inputs), stable: hasStableAddress(inputs) };
+      })().pipe(
+        // On any failure we know nothing about aliases, so claim stability
+        // rather than raise a false "not live" alarm.
+        Effect.catch(() => Effect.succeed({ url: deployment.url ?? "", stable: true })),
+      );
 
     /** Put the fresh deployment URL in the clipboard, ready to paste/share. */
     const copyUrlToClipboard = (url: string): Effect.Effect<boolean> =>
@@ -198,9 +203,25 @@ export const make = (deps: {
     const onReady: ReadyEffectsShape["onReady"] = (projectId, deployment, projectName) =>
       Effect.fn("ReadyEffects.onReady")(function* () {
         let url: string | null = deployment.url;
+        /**
+         * Set when this deployment went live *technically* but not
+         * *publicly* — see `hasStableAddress`. Detected by comparing against
+         * the address the project already had: a first-ever deploy can
+         * legitimately have no alias yet for a moment, but a project that had
+         * a stable URL and suddenly doesn't is the Instant-Rollback state,
+         * where Vercel has stopped auto-assigning the production domain.
+         * Requiring the prior URL is what keeps this from crying wolf.
+         */
+        let notLiveAt: string | null = null;
         if (deployment.url) {
-          const resolved = yield* resolvePublicUrl(projectId, deployment);
+          const previousPublicUrl = (yield* SubscriptionRef.get(appState.latestByProject))[
+            projectId
+          ]?.publicUrl;
+          const { url: resolved, stable } = yield* resolvePublicUrl(projectId, deployment);
           url = resolved;
+          if (!stable && previousPublicUrl && previousPublicUrl !== resolved) {
+            notLiveAt = previousPublicUrl;
+          }
           if (resolved !== deployment.url) {
             yield* Effect.gen(function* () {
               yield* ipc.db.setDeploymentPublicUrl(deployment.id, resolved);
@@ -217,6 +238,17 @@ export const make = (deps: {
             );
           }
           yield* Effect.forkDetach(captureSnapshot(projectId, resolved));
+        }
+        if (notLiveAt) {
+          // Deliberately *not* copied to the clipboard: handing over the
+          // per-deployment URL here would let the user share an address that
+          // isn't their site, while their real one still serves the version
+          // they rolled back to. Say what happened instead.
+          yield* notify(
+            "Deployed — but not live",
+            `${projectName ?? "Project"} built successfully, but ${notLiveAt} still serves the rolled-back version.\nVercel stops auto-assigning the production domain after a rollback — promote this deployment in Vercel to go live again.`,
+          );
+          return;
         }
         const copied = url ? yield* copyUrlToClipboard(url) : false;
         yield* notify(
@@ -247,15 +279,33 @@ export const make = (deps: {
             );
           }
           const fresh = yield* ipc.db.listProjects();
-          yield* SubscriptionRef.set(appState.projects, fresh);
+          yield* appState.setProjects(fresh);
         }).pipe(Effect.catch(() => Effect.sync(() => integrationChecked.delete(projectId))));
       })();
 
     const recordVercelIds: ReadyEffectsShape["recordVercelIds"] = (ourDeploymentId, info) =>
       Effect.fn("ReadyEffects.recordVercelIds")(function* () {
         yield* ipc.db.setDeploymentVercelIds(ourDeploymentId, info.vercelDeploymentId, info.inspectorUrl);
-        const latest = yield* SubscriptionRef.get(appState.latestByProject);
-        const dep = Object.values(latest).find((d) => d?.id === ourDeploymentId);
+        /**
+         * Looked up in `deploymentsByProject` (every deployment) rather than
+         * `latestByProject` (only the newest per project).
+         *
+         * A coalesced follow-up can start before this callback runs, which
+         * replaces our deployment as the project's "latest" — and the old
+         * lookup then found nothing and returned early, silently skipping
+         * everything below it: `setProjectLink`, `setProjectTeam`, and the
+         * `.vercel/project.json` write. That file is the identity marker
+         * `reconciler`'s `isLegitRename` depends on, so a project that hit
+         * this would later lose its history and link on a folder rename —
+         * from a race it had no way to report. Nothing retried, because the
+         * DB write above had already succeeded.
+         */
+        const byProject = yield* SubscriptionRef.get(appState.deploymentsByProject);
+        let dep: Deployment | undefined;
+        for (const list of Object.values(byProject)) {
+          dep = list.find((d) => d.id === ourDeploymentId);
+          if (dep) break;
+        }
         if (!dep) return;
         yield* appState.upsertDeployment({
           ...dep,
@@ -277,7 +327,7 @@ export const make = (deps: {
           yield* ipc.db.setProjectTeam(project.id, teamId);
         }
         const fresh = yield* ipc.db.listProjects();
-        yield* SubscriptionRef.set(appState.projects, fresh);
+        yield* appState.setProjects(fresh);
         yield* Effect.forkDetach(checkRemoteIntegration(project.id));
       })().pipe(
         Effect.catch((err) =>

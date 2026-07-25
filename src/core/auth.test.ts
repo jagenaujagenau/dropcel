@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { needsRefresh } from "./auth";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as ipcMock from "../lib/ipc";
+import { needsRefresh, oauthRefreshOutcome } from "./auth";
+import * as api from "./vercel-api";
 import { parseDeviceAuthorization, parseDevicePoll, parseTokenResponse } from "./vercel-api";
 
 describe("parseDeviceAuthorization", () => {
@@ -91,5 +93,53 @@ describe("parseTokenResponse", () => {
   it("rejects responses without an access token", () => {
     expect(parseTokenResponse({ error: "invalid_grant" }, now)).toBeNull();
     expect(parseTokenResponse(null, now)).toBeNull();
+  });
+});
+
+// ---- persistSession's rotated-refresh-token handling ----------------------
+
+vi.mock("../lib/ipc", () => ({
+  credentials: {
+    setToken: vi.fn(async () => {}),
+    setRefreshToken: vi.fn(async () => {}),
+    deleteRefreshToken: vi.fn(async () => {}),
+    getRefreshToken: vi.fn(async () => "old-refresh"),
+  },
+  db: { setSetting: vi.fn(async () => {}) },
+}));
+
+vi.mock("./account-session", () => ({ activeSessionToken: vi.fn() }));
+
+describe("oauthRefreshOutcome — rotated refresh token", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("clears the spent token when the rotated one cannot be stored", async () => {
+    vi.spyOn(api, "run").mockResolvedValue({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      expiresAtMs: 123,
+    } as never);
+    vi.mocked(ipcMock.credentials.setRefreshToken).mockRejectedValueOnce(new Error("keychain busy"));
+
+    const outcome = await oauthRefreshOutcome();
+
+    // The access token still landed, so this refresh itself succeeded…
+    expect(outcome).toMatchObject({ ok: true, token: "new-access" });
+    // …but the spent refresh token must not be left behind: presenting it
+    // later would be classified as "revoked" and sign the user out.
+    expect(ipcMock.credentials.deleteRefreshToken).toHaveBeenCalled();
+  });
+
+  it("leaves the stored refresh token alone when the write succeeds", async () => {
+    vi.spyOn(api, "run").mockResolvedValue({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      expiresAtMs: 123,
+    } as never);
+
+    await oauthRefreshOutcome();
+
+    expect(ipcMock.credentials.setRefreshToken).toHaveBeenCalledWith("new-refresh");
+    expect(ipcMock.credentials.deleteRefreshToken).not.toHaveBeenCalled();
   });
 });

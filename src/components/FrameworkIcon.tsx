@@ -3,10 +3,15 @@ import { FRAMEWORK_LABELS, type Framework } from "../core/types";
 import { cn } from "../lib/utils";
 
 /**
- * Stand-in for a project's preview screenshot before one exists (see
- * SitePreview — screenshots only appear after the first Ready deploy).
- * A handful of frameworks get a recognizable mark; everything else falls
- * back to a monogram badge rather than guessing at an unfamiliar logo.
+ * A project's framework as a single-colour mark, drawn in `currentColor` so
+ * the caller decides the ink — the card chip paints it in the page background
+ * against a solid accent.
+ *
+ * Inline rather than the real logos in assets/icons/: those are Rust-only
+ * (outside Vite's served root) and several are monochrome black, which would
+ * disappear against the chip in one of the two themes. A handful of
+ * frameworks get a recognisable mark; everything else falls back to a
+ * monogram rather than guessing at an unfamiliar logo.
  */
 export function FrameworkIcon({
   framework,

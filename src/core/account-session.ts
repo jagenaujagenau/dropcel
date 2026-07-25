@@ -245,10 +245,37 @@ export const make = (deps: AccountSessionDeps) =>
         }),
       );
       if (!join.owner) return yield* Deferred.await(join.deferred);
-      const exit = yield* Effect.exit(degraded);
-      yield* Ref.set(inflight, null);
-      yield* Deferred.done(join.deferred, exit);
-      return yield* exit;
+      /**
+       * The owner's cleanup has to be unconditional.
+       *
+       * `Effect.exit` catches failures and defects, but *not* interruption of
+       * the fiber running this — and `getToken` is called from fibers that get
+       * interrupted in normal operation (`resolvePublicUrl` runs under the
+       * ReadyEffects scope). An interrupt landing between `Ref.set(inflight,
+       * deferred)` above and the clear below left `inflight` holding a
+       * Deferred that would never complete, and since every API call in the
+       * app funnels through here, *every* subsequent caller blocked on
+       * `Deferred.await` forever. A dead app, from one ordinary interrupt.
+       *
+       * `ensuring` also runs on the happy path, where both statements are
+       * no-ops: `inflight` is already null, and completing an
+       * already-completed Deferred does nothing.
+       */
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(degraded);
+        yield* Ref.set(inflight, null);
+        yield* Deferred.done(join.deferred, exit);
+        return yield* exit;
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* Ref.set(inflight, null);
+            // Releases anyone already parked on this renewal, rather than
+            // stranding them; they retry against a now-clear `inflight`.
+            yield* Deferred.interrupt(join.deferred);
+          }),
+        ),
+      );
     })();
 
     /**

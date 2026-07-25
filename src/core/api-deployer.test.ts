@@ -37,7 +37,7 @@ vi.mock("./vercel-api", async (importOriginal) => {
 import { VercelApiError, type ApiDeployment } from "./vercel-api";
 
 const apiError = (over: Partial<ConstructorParameters<typeof VercelApiError>[0]> = {}) =>
-  new VercelApiError({ status: 400, code: null, message: "bad request", detail: null, ...over });
+  new VercelApiError({ status: 400, code: null, message: "bad request", detail: null, retryAfterMs: null, ...over });
 
 const dpl = (over: Partial<ApiDeployment> = {}): ApiDeployment => ({
   id: "dpl_1",
@@ -224,5 +224,70 @@ describe("api deployer", () => {
     const outcome = await deploy(h).done;
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toMatch(/empty — nothing to deploy/);
+  });
+
+  /**
+   * A defect (something throwing where nothing declared a failure — e.g.
+   * `JSON.parse` on a proxy's 502 HTML page) used to be reported identically
+   * to a user cancellation: no error text, and no retry, because `canceled`
+   * short-circuits both the retry policy and the error explainer.
+   */
+  it("reports an unexpected throw as a retryable failure, not as canceled", async () => {
+    mocks.createDeployment.mockReturnValue(Effect.succeed(dpl({ readyState: "QUEUED" })));
+    mocks.getDeployment.mockImplementation(() => {
+      throw new SyntaxError("Unexpected token '<' in JSON at position 0");
+    });
+    const h = makeHarness();
+    const outcome = await deploy(h).done;
+    expect(outcome.canceled).toBe(false);
+    expect(outcome.retryable).toBe(true);
+    expect(outcome.error).toMatch(/Unexpected token/);
+  });
+
+  /**
+   * Vercel queues server-side once a plan's concurrent-build limit is reached
+   * — one on Hobby. A folder-watcher meets that constantly, and polling every
+   * parked deployment at full rate spends the account's rate limit learning
+   * nothing.
+   */
+  it("slows its polling while a deployment sits queued, and speeds back up", async () => {
+    mocks.createDeployment.mockReturnValue(Effect.succeed(dpl({ readyState: "QUEUED" })));
+    let calls = 0;
+    mocks.getDeployment.mockImplementation(() => {
+      calls += 1;
+      // Parked for a while, then it starts building, then finishes.
+      if (calls <= 3) return Effect.succeed(dpl({ readyState: "QUEUED" }));
+      if (calls === 4) return Effect.succeed(dpl({ readyState: "BUILDING" }));
+      return Effect.succeed(dpl({ readyState: "READY" }));
+    });
+
+    const h = makeHarness({ pollMs: 4 });
+    const started = Date.now();
+    const outcome = await deploy(h).done;
+    const elapsed = Date.now() - started;
+
+    expect(outcome.ok).toBe(true);
+    // Backoff is 4 → 8 → 16 while queued (28ms), versus 12ms at a flat rate.
+    // Asserting "slower than flat" is the property; exact timing is not.
+    expect(elapsed).toBeGreaterThan(4 * 3);
+  });
+
+  /**
+   * A build that never reaches a terminal state used to poll forever while
+   * holding one of the queue's four global deploy permits — four of them and
+   * nothing in the app could deploy again until relaunch. The timeout is what
+   * turns that into an ordinary retryable failure.
+   */
+  it("gives up on a build that never terminates, instead of polling forever", async () => {
+    mocks.createDeployment.mockReturnValue(Effect.succeed(dpl({ readyState: "QUEUED" })));
+    // Never leaves BUILDING.
+    mocks.getDeployment.mockReturnValue(Effect.succeed(dpl({ readyState: "BUILDING" })));
+    const h = makeHarness({ pollMs: 1, buildTimeoutMs: 20 });
+    const outcome = await deploy(h).done;
+    expect(outcome.ok).toBe(false);
+    expect(outcome.canceled).toBe(false);
+    // Retryable: a stuck build is usually transient, so the queue should try again.
+    expect(outcome.retryable).toBe(true);
+    expect(outcome.error).toMatch(/never reported this build as finished/);
   });
 });

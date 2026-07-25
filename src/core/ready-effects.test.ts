@@ -192,6 +192,47 @@ describe("ReadyEffects", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  /**
+   * A coalesced follow-up can supersede our deployment as the project's
+   * "latest" before this callback runs. Looking the deployment up there meant
+   * finding nothing and returning early — silently skipping the project link
+   * and the `.vercel/project.json` write that folder-rename detection depends
+   * on, with nothing to retry it.
+   */
+  it.effect("records the project link even after a newer deployment superseded ours", () => {
+    const linked: (string | null)[] = [];
+    const h = makeHarness({
+      db: {
+        setProjectLink: (_id: string, vercelProjectId: string | null) => {
+          linked.push(vercelProjectId);
+          return Promise.resolve();
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [
+        makeProject({ id: "p1", name: "blog", vercelProjectId: null }),
+      ]);
+      yield* h.appState.upsertDeployment(
+        makeDeployment({ id: "d1", projectId: "p1", startedAt: "2026-01-01T00:00:00Z" }),
+      );
+      // The follow-up starts before the API callback for d1 lands.
+      yield* h.appState.upsertDeployment(
+        makeDeployment({ id: "d2", projectId: "p1", startedAt: "2026-01-02T00:00:00Z" }),
+      );
+
+      const readyEffects = yield* ReadyEffects;
+      yield* readyEffects.recordVercelIds("d1", {
+        vercelDeploymentId: "dpl_1",
+        inspectorUrl: "https://vercel.com/me/blog/dpl_1",
+        vercelProjectId: "prj_1",
+        ownerId: "team_x",
+      });
+
+      expect(linked).toEqual(["prj_1"]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect("onTransition to failed notifies with the actionable error", () => {
     const h = makeHarness({
       db: {
@@ -236,6 +277,59 @@ describe("ReadyEffects", () => {
           body: "blog\nhttps://blog-abc.vercel.app\nURL copied to clipboard",
         },
       ]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /**
+   * After an Instant Rollback Vercel stops auto-assigning the production
+   * domain, so later deployments build fine while the public URL keeps
+   * serving the rolled-back version. Reporting that as "Ready" — and copying
+   * a URL that isn't the user's site — is the worst outcome for a tool whose
+   * premise is that saving a file updates the site.
+   */
+  it.effect("reports a deploy that built but never took over the public URL", () => {
+    const h = makeHarness({ db: { listDomains: () => Promise.resolve([]) } });
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      // The project already had a stable address from an earlier deploy.
+      yield* h.appState.upsertDeployment(
+        makeDeployment({
+          id: "d0",
+          projectId: "p1",
+          publicUrl: "https://blog.vercel.app",
+          startedAt: "2026-01-01T00:00:00Z",
+        }),
+      );
+
+      const readyEffects = yield* ReadyEffects;
+      yield* readyEffects.onReady(
+        "p1",
+        makeDeployment({ id: "d1", projectId: "p1", url: "https://blog-xyz.vercel.app" }),
+        "blog",
+      );
+      yield* settle;
+
+      expect(h.notifications[0]!.title).toBe("Deployed — but not live");
+      expect(h.notifications[0]!.body).toContain("https://blog.vercel.app");
+      // Never hand over an address that isn't the site.
+      expect(h.clipboardWrites).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /** A project's first deploy legitimately has no alias yet — that must not
+   * be mistaken for the rollback state. */
+  it.effect("does not cry wolf on a first deploy with no alias yet", () => {
+    const h = makeHarness({ db: { listDomains: () => Promise.resolve([]) } });
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      const readyEffects = yield* ReadyEffects;
+      yield* readyEffects.onReady(
+        "p1",
+        makeDeployment({ id: "d1", projectId: "p1", url: "https://blog-xyz.vercel.app" }),
+        "blog",
+      );
+      yield* settle;
+      expect(h.notifications[0]!.title).toBe("Deployment Ready");
     }).pipe(Effect.provide(h.layer));
   });
 
