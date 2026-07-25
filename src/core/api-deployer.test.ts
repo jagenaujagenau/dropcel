@@ -81,6 +81,7 @@ function makeHarness(overrides: Partial<ApiDeployerDeps> = {}): Harness {
     getProjectMeta: async () => ({
       framework: "static",
       teamId: null,
+  ownerUid: null,
       vercelProjectId: "prj_1",
     }),
     collectFiles: async () => ({ files: FILES, digest: "digest-1" }),

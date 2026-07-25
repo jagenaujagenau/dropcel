@@ -71,6 +71,7 @@ function makeProject(id: string, autoDeploy: boolean): Project {
     lockedBranch: null,
     remoteRepo: null,
     teamId: null,
+  ownerUid: null,
   };
 }
 

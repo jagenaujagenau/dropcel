@@ -28,6 +28,7 @@ function makeProject(overrides: Partial<Project> & { id: string; name: string })
     lockedBranch: null,
     remoteRepo: null,
     teamId: null,
+  ownerUid: null,
     ...overrides,
   };
 }

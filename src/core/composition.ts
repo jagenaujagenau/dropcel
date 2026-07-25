@@ -36,7 +36,7 @@ import { make as ipcMake, Ipc } from "./ipc";
 import { DeployQueue, layer as deployQueueLayer, type QueueDeps } from "./queue";
 import { layer as readyEffectsLayer, ReadyEffects, type RecordVercelIdsInfo } from "./ready-effects";
 import { make as reconcilerMake, ReconcilerService, type ReconcilerHooks } from "./reconciler";
-import type { DeployTarget } from "./types";
+import type { Account, DeployTarget } from "./types";
 import { layer as updaterLayer, Updater } from "./updater";
 import { layer as watchStreamLayer, WatchStream } from "./watch-stream";
 
@@ -382,8 +382,22 @@ export async function purgeProject(projectId: string): Promise<void> {
   await refreshTray();
 }
 
+/** Pull the account cache out of SQLite into the store. Signing in is the
+ * only thing that changes it, so it is refreshed there rather than polled. */
+export async function refreshAccounts(): Promise<void> {
+  const rows = await ipc.db.listAccounts().catch(() => []);
+  const byUid: Record<string, Account> = {};
+  for (const a of rows) byUid[a.uid] = a;
+  Effect.runSync(SubscriptionRef.set(appStateShape.accounts, byUid));
+}
+
 export function refreshAuth(): Promise<void> {
-  return Effect.runPromise(accountSessionShape.refreshIdentity);
+  // The account cache is refreshed on the way out, not by refreshIdentity
+  // itself: identity writes the accounts row, and the render layer reads it
+  // back through its own atom, so the read has to happen after the write.
+  return Effect.runPromise(accountSessionShape.refreshIdentity).then(() =>
+    refreshAccounts().catch(() => {}),
+  );
 }
 
 /** User chose how to handle an account switch (Keep Links / Start Fresh). */

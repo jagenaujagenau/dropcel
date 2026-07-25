@@ -12,6 +12,7 @@ import {
   managedRuntime,
   purgeProject,
   reconcile,
+  refreshAccounts,
   refreshAuth,
   resolveAccountSwitch,
 } from "./composition";
@@ -170,6 +171,16 @@ export const projectSnapshotAtom = Atom.family((projectId: string) =>
   Atom.map(snapshotByProjectRaw, (m) => m[projectId]),
 );
 
+/**
+ * Every Vercel account this install has seen, keyed by uid.
+ *
+ * Read straight from SQLite rather than mirrored into AppState: it changes
+ * only when someone signs in, and the card that wants it needs a lookup
+ * (uid → avatar), not a subscription. `refreshAccounts` is called after an
+ * identity refresh.
+ */
+export const accountsAtom = Atom.subscriptionRef(appStateShape.accounts);
+
 const heldByProjectRaw = Atom.subscriptionRef(appStateShape.heldByProject);
 /** Why a project hasn't deployed — null when it isn't held at all. */
 export const heldReasonsAtom = Atom.family((projectId: string) =>
@@ -228,6 +239,7 @@ export {
   installUpdateAndRelaunch,
   purgeProject,
   reconcile,
+  refreshAccounts,
   refreshAuth,
   resolveAccountSwitch,
 };

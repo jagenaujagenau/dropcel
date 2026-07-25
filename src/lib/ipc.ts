@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Deployment, LogLine, Project, ProjectDomain } from "../core/types";
+import type { Account, Deployment, LogLine, Project, ProjectDomain } from "../core/types";
 
 /**
  * The only file that talks to Tauri. Everything above it depends on these
@@ -32,6 +32,13 @@ export const db = {
   setProjectFramework: (id: string, framework: string) =>
     invoke<void>("db_set_project_framework", { id, framework }),
   deleteProject: (id: string) => invoke<void>("db_delete_project", { id }),
+  setProjectOwner: (id: string, ownerUid: string) =>
+    invoke<void>("db_set_project_owner", { id, ownerUid }),
+  claimUnownedProjects: (ownerUid: string) =>
+    invoke<number>("db_claim_unowned_projects", { ownerUid }),
+  upsertAccount: (uid: string, username: string, avatarUrl: string | null) =>
+    invoke<void>("db_upsert_account", { uid, username, avatarUrl }),
+  listAccounts: () => invoke<Account[]>("db_list_accounts"),
   insertDeployment: (
     projectId: string,
     target: string,

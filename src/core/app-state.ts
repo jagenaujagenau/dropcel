@@ -5,7 +5,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { GitStatus } from "./git";
 import type { HoldReason } from "./held-changes";
 import type { Theme } from "../lib/theme";
-import type { Deployment, Project } from "./types";
+import type { Account, Deployment, Project } from "./types";
 
 /**
  * UI-facing projection state, Effect-native: every field is a
@@ -30,6 +30,9 @@ export interface AppStateShape {
   readonly deploymentsByProject: SubscriptionRef.SubscriptionRef<Record<string, Deployment[]>>;
   /** Latest site snapshot (PNG data URL) per project. */
   readonly snapshotByProject: SubscriptionRef.SubscriptionRef<Record<string, string | undefined>>;
+  /** Vercel accounts this install has seen, by uid — the source for showing
+   * whose a project is when more than one account has used this folder. */
+  readonly accounts: SubscriptionRef.SubscriptionRef<Record<string, Account>>;
   /** Git state per project (null when not a repo / unknown). */
   readonly gitByProject: SubscriptionRef.SubscriptionRef<Record<string, GitStatus | null>>;
   /** Mirror of HeldChangesService's internal map, broadcast on every change
@@ -104,6 +107,7 @@ export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
   const latestByProject = yield* SubscriptionRef.make<Record<string, Deployment | undefined>>({});
   const deploymentsByProject = yield* SubscriptionRef.make<Record<string, Deployment[]>>({});
   const snapshotByProject = yield* SubscriptionRef.make<Record<string, string | undefined>>({});
+  const accounts = yield* SubscriptionRef.make<Record<string, Account>>({});
   const gitByProject = yield* SubscriptionRef.make<Record<string, GitStatus | null>>({});
   const heldByProject = yield* SubscriptionRef.make<Record<string, HoldReason[]>>({});
   const rootFolder = yield* SubscriptionRef.make("");
@@ -153,6 +157,7 @@ export const make: Effect.Effect<AppStateShape> = Effect.gen(function* () {
     latestByProject,
     deploymentsByProject,
     snapshotByProject,
+    accounts,
     gitByProject,
     heldByProject,
     rootFolder,

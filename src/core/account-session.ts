@@ -102,6 +102,18 @@ export interface AccountSessionDeps {
   removeLinkFile: (projectName: string) => Effect.Effect<void, unknown>;
   /** Fresh start chosen — reset per-session integration bookkeeping. */
   onFreshStart: () => void;
+  /** Cache who this is, so a project owned by an account that is not signed
+   * in right now can still be shown as theirs. */
+  rememberAccount: (
+    uid: string,
+    username: string,
+    avatarUrl: string | null,
+  ) => Effect.Effect<void, unknown>;
+  /** Give every project with no owner to `uid`. */
+  claimUnownedProjects: (uid: string) => Effect.Effect<void, unknown>;
+  /** Reassign every project to `uid` — "start fresh" re-creates them all
+   * under the new account, so they change hands. */
+  setProjectOwner: (projectId: string, uid: string) => Effect.Effect<void, unknown>;
   /** Reload projects from the db into the store after resolution. */
   reloadProjects: Effect.Effect<void, unknown>;
   /** The switch is resolved — deploy the changes that piled up. */
@@ -327,6 +339,16 @@ export const make = (deps: AccountSessionDeps) =>
       }
       const user = yield* deps.fetchUser(token);
       yield* setAuthedAs(user.username, user.avatarUrl);
+      yield* deps.rememberAccount(user.uid, user.username, user.avatarUrl ?? null)
+        .pipe(Effect.ignore);
+      /*
+        Claim whatever has no owner. Projects created before ownership existed
+        have none, and they were deployed by whoever is signed in now in all
+        but the pathological case — claiming them beats showing a folder of
+        question marks. Only NULL owners are touched, so this never takes a
+        project away from the account that actually made it.
+      */
+      yield* deps.claimUnownedProjects(user.uid).pipe(Effect.ignore);
       if (!hadToken) {
         deps.notify(
           "Signed in via Vercel CLI",
@@ -373,6 +395,18 @@ export const make = (deps: AccountSessionDeps) =>
         if (user) {
           yield* deps.setSetting(UID_SETTING, user.uid).pipe(Effect.ignore);
           yield* deps.setSetting(USERNAME_SETTING, user.username).pipe(Effect.ignore);
+          yield* deps
+            .rememberAccount(user.uid, user.username, user.avatarUrl ?? null)
+            .pipe(Effect.ignore);
+          if (mode === "fresh") {
+            // Every project is about to re-create under the new account, so
+            // every project changes hands. "keep" is the opposite: the links
+            // still point at the old account's projects, and the ownership
+            // recorded against them is still true.
+            for (const p of deps.getProjects()) {
+              yield* deps.setProjectOwner(p.id, user.uid).pipe(Effect.ignore);
+            }
+          }
         }
       }
       deps.clearAccountSwitch();
@@ -421,6 +455,10 @@ export const realDeps = (ipc: IpcShape, hooks: AccountSessionHooks): AccountSess
   clearProjectTeam: (id) => ipc.db.setProjectTeam(id, null),
   clearRemoteRepo: (id) => ipc.db.setRemoteRepo(id, ""),
   removeLinkFile: (name) => ipc.files.removeProjectLink(name),
+  rememberAccount: (uid, username, avatarUrl) =>
+    ipc.db.upsertAccount(uid, username, avatarUrl),
+  claimUnownedProjects: (uid) => ipc.db.claimUnownedProjects(uid),
+  setProjectOwner: (id, uid) => ipc.db.setProjectOwner(id, uid),
   setAuthedAs: hooks.setAuthedAs,
   notify: hooks.notify,
   onSwitchDetected: hooks.onSwitchDetected,

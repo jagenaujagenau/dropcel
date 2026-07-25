@@ -39,6 +39,17 @@ export interface Project {
   remoteRepo: string | null;
   /** Owning team id (team_…) for API scoping; null = personal scope. */
   teamId: string | null;
+  /** The Vercel account this project deploys under. Null on projects that
+   * predate ownership tracking, until the signed-in user claims them. */
+  ownerUid: string | null;
+}
+
+/** A Vercel account this install has seen, cached so a project owned by
+ * someone who is not signed in right now can still show whose it is. */
+export interface Account {
+  uid: string;
+  username: string;
+  avatarUrl: string | null;
 }
 
 export interface Deployment {

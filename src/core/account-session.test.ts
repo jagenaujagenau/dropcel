@@ -39,6 +39,9 @@ interface Harness {
   reloads: () => number;
   resolved: () => number;
   accountSwitch: { from: string; to: string } | null;
+  remembered: { uid: string; username: string }[];
+  claimedFor: string[];
+  owners: { id: string; uid: string }[];
 }
 
 const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
@@ -53,6 +56,9 @@ const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
       notifications: [] as string[],
       switches: [] as { from: string; to: string }[],
       cleared: { link: [], team: [], repo: [], file: [] } as Harness["cleared"],
+      remembered: [] as { uid: string; username: string }[],
+      claimedFor: [] as string[],
+      owners: [] as { id: string; uid: string }[],
       freshStarts: () => counters.fresh,
       reloads: () => counters.reloads,
       resolved: () => counters.resolved,
@@ -92,6 +98,10 @@ const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
       clearProjectTeam: (id) => Effect.sync(() => void h.cleared.team.push(id)),
       clearRemoteRepo: (id) => Effect.sync(() => void h.cleared.repo.push(id)),
       removeLinkFile: (name) => Effect.sync(() => void h.cleared.file.push(name)),
+      rememberAccount: (uid, username) =>
+        Effect.sync(() => void h.remembered.push({ uid, username })),
+      claimUnownedProjects: (uid) => Effect.sync(() => void h.claimedFor.push(uid)),
+      setProjectOwner: (id, uid) => Effect.sync(() => void h.owners.push({ id, uid })),
       onFreshStart: () => void (counters.fresh += 1),
       reloadProjects: Effect.sync(() => void (counters.reloads += 1)),
       onSwitchResolved: () => void (counters.resolved += 1),

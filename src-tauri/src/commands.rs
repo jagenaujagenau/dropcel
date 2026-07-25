@@ -4,7 +4,7 @@
 
 use tauri::{AppHandle, Emitter, State};
 
-use crate::db::{Db, Deployment, LogLine, Project, ProjectDomain};
+use crate::db::{Account, Db, Deployment, LogLine, Project, ProjectDomain};
 use crate::error::AppResult;
 use crate::watcher::{self, WatcherState};
 
@@ -44,6 +44,16 @@ db_command!(db_set_auto_deploy(id: String, enabled: bool) -> () => set_auto_depl
 db_command!(db_set_project_framework(id: String, framework: String) -> ()
     => set_project_framework(&id, &framework));
 db_command!(db_delete_project(id: String) -> () => delete_project(&id));
+db_command!(db_set_project_owner(id: String, owner_uid: String) -> ()
+    => set_project_owner(&id, &owner_uid));
+db_command!(db_claim_unowned_projects(owner_uid: String) -> usize
+    => claim_unowned_projects(&owner_uid));
+
+// ---- accounts -------------------------------------------------------------
+
+db_command!(db_upsert_account(uid: String, username: String, avatar_url: Option<String>) -> ()
+    => upsert_account(&uid, &username, avatar_url.as_deref()));
+db_command!(db_list_accounts() -> Vec<Account> => list_accounts());
 
 // ---- deployments ----------------------------------------------------------
 

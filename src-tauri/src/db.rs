@@ -73,6 +73,18 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE deployments ADD COLUMN vercel_deployment_id TEXT;
      ALTER TABLE deployments ADD COLUMN inspector_url TEXT;
      ALTER TABLE projects ADD COLUMN team_id TEXT;",
+    // v7 — which account a project belongs to. Until now the signed-in
+    // account owned everything implicitly, so two accounts' projects were
+    // indistinguishable and an account switch could only resolve all-or-
+    // nothing. `accounts` caches enough to draw someone who is NOT signed in
+    // right now — their avatar has to come from somewhere.
+    "ALTER TABLE projects ADD COLUMN owner_uid TEXT;
+     CREATE TABLE IF NOT EXISTS accounts (
+        uid TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        avatar_url TEXT,
+        updated_at TEXT NOT NULL
+     );",
 ];
 
 pub fn open(db_path: &Path) -> AppResult<Db> {
@@ -154,6 +166,9 @@ pub struct Project {
     pub remote_repo: Option<String>,
     /// Owning team id (team_…) for API scoping; None = personal scope.
     pub team_id: Option<String>,
+    /// The Vercel account this project deploys under. None on rows created
+    /// before v7 until the signed-in user claims them.
+    pub owner_uid: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -175,6 +190,16 @@ pub struct Deployment {
     /// Vercel's own deployment id (dpl_…) once the API created it.
     pub vercel_deployment_id: Option<String>,
     pub inspector_url: Option<String>,
+}
+
+/// A Vercel account this install has seen. Cached so a project owned by
+/// someone who is not currently signed in can still be drawn.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub uid: String,
+    pub username: String,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -210,6 +235,7 @@ fn row_to_project(r: &rusqlite::Row) -> rusqlite::Result<Project> {
         locked_branch: r.get(8)?,
         remote_repo: r.get(9)?,
         team_id: r.get(10)?,
+        owner_uid: r.get(11)?,
     })
 }
 
@@ -234,7 +260,7 @@ fn row_to_deployment(r: &rusqlite::Row) -> rusqlite::Result<Deployment> {
 }
 
 const PROJECT_COLS: &str =
-    "id, name, path, framework, vercel_project_id, auto_deploy, created_at, updated_at, locked_branch, remote_repo, team_id";
+    "id, name, path, framework, vercel_project_id, auto_deploy, created_at, updated_at, locked_branch, remote_repo, team_id, owner_uid";
 const DEPLOYMENT_COLS: &str =
     "id, project_id, state, target, url, error, exit_code, started_at, finished_at, duration_ms, public_url, branch, commit_sha, vercel_deployment_id, inspector_url";
 
@@ -509,6 +535,63 @@ impl Db {
                 ts: r.get(2)?,
                 stream: r.get(3)?,
                 line: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn set_project_owner(&self, id: &str, owner_uid: &str) -> AppResult<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE projects SET owner_uid = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, owner_uid, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Give every unowned project to `owner_uid`.
+    ///
+    /// Existing installs have a whole folder of projects and no record of who
+    /// made them. They were deployed by whoever is signed in, in all but the
+    /// pathological case, so claiming them on first sight beats showing a
+    /// grid of question marks. `IS NULL` is what keeps it a backfill: a
+    /// project that already has an owner is never reassigned by this.
+    pub fn claim_unowned_projects(&self, owner_uid: &str) -> AppResult<usize> {
+        let conn = self.conn();
+        Ok(conn.execute(
+            "UPDATE projects SET owner_uid = ?1 WHERE owner_uid IS NULL",
+            params![owner_uid],
+        )?)
+    }
+
+    pub fn upsert_account(
+        &self,
+        uid: &str,
+        username: &str,
+        avatar_url: Option<&str>,
+    ) -> AppResult<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO accounts (uid, username, avatar_url, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(uid) DO UPDATE SET
+               username = excluded.username,
+               avatar_url = excluded.avatar_url,
+               updated_at = excluded.updated_at",
+            params![uid, username, avatar_url, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_accounts(&self) -> AppResult<Vec<Account>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT uid, username, avatar_url FROM accounts ORDER BY username")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Account {
+                uid: r.get(0)?,
+                username: r.get(1)?,
+                avatar_url: r.get(2)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

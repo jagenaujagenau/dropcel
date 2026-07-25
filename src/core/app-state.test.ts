@@ -26,6 +26,7 @@ const project = (name: string, over: Partial<Project> = {}): Project => ({
   lockedBranch: null,
   remoteRepo: null,
   teamId: null,
+  ownerUid: null,
   ...over,
 });
 

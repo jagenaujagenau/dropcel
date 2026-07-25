@@ -34,6 +34,7 @@ const project = (name: string): Project => ({
   lockedBranch: null,
   remoteRepo: null,
   teamId: null,
+  ownerUid: null,
 });
 
 const deployment = (projectId: string, over: Partial<Deployment> = {}): Deployment => ({
