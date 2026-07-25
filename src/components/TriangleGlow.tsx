@@ -4,8 +4,8 @@ import { buildGlyphAtlas } from "./matrix-glyphs";
 import { FRAGMENT_SHADER, VERTEX_SHADER } from "./triangle-glow-shader";
 
 /**
- * Matrix rain with the Vercel triangle cut out of it — see
- * `triangle-glow-shader.ts` for how the shape is revealed.
+ * Matrix rain burning inside the Vercel triangle — see
+ * `triangle-glow-shader.ts` for how the shape contains it.
  *
  * Used in exactly one place, the drop overlay, and only while a file is
  * actually landing. Renders nothing at all when WebGL2 is unavailable or the

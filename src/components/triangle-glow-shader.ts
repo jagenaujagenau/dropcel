@@ -1,19 +1,20 @@
 /**
- * Matrix rain that reveals a triangle.
+ * Matrix rain contained by a triangle.
  *
- * Nothing is ever drawn for the triangle — no fill, no outline, no glow. It
- * exists only as a signed distance field doing two things:
+ * Nothing is ever drawn for the triangle itself — no fill, no outline, no
+ * glow. It exists only as a signed distance field doing two things:
  *
- *   - it OCCLUDES the rain, so no glyph is drawn inside it and the shape is
- *     negative space, a void the rain cannot enter;
- *   - it brightens what approaches it, so glyphs warm as they near the surface
- *     and blow out to white on contact.
+ *   - it CONTAINS the bright rain. Inside the shape the field runs at several
+ *     times the exterior gain, so the triangle is the brightest thing on the
+ *     screen and reads as a lit vessel the rain is falling through;
+ *   - the same rain continues outside at a dim ambient level, which is what
+ *     the interior is bright AGAINST. Without it the lit shape floats with
+ *     nothing to be brighter than.
  *
- * Every attempt to help the silhouette along was removed for reading as the
- * triangle being drawn on top of the rain rather than found by it: a
- * brightness floor inside (a static block of lit glyphs), an interior bloom
- * (hazed it into a blob), and a halo on the edge, both wide-soft and
- * thin-tight (an outline by any other name).
+ * The edge is found, not drawn: glyphs blow out to white as they pass the
+ * inner surface, so the silhouette is legible as each one arrives at it rather
+ * than being outlined. A halo on the boundary, wide-soft or thin-tight, was
+ * tried and removed — it is an outline by any other name.
  *
  * The rain is adapted from IRCSS/MatrixVFX (MIT) —
  * https://github.com/IRCSS/MatrixVFX, Assets/Shaders/Resources/
@@ -112,18 +113,24 @@ void main() {
 
   float triDist = triangleSdf(p, top, left, right);
 
-  // The triangle OCCLUDES the rain. No glyph is ever drawn inside it, so the
-  // shape is negative space — a clean void the rain cannot enter — rather than
-  // a region of differently-lit glyphs.
+  // The triangle CONTAINS the bright rain. Antialiased over a pixel so the
+  // walls stay clean at any size.
   float inside = 1.0 - smoothstep(-1.0 * u_dpr, 1.0 * u_dpr, triDist);
   float outside = 1.0 - inside;
 
-  // Proximity, measured only outside (max with 0). Two falloffs, because one
-  // cannot do both jobs: a single wide one brightens a large soft region and
-  // never produces an edge, a single tight one switches on at the boundary
-  // with no build-up. Wide = the approach, tight = the arrival.
-  float rim = exp(-max(triDist, 0.0) / max(radius * 0.22, 1e-4));
-  float contact = exp(-max(triDist, 0.0) / max(radius * 0.06, 1e-4));
+  // Two falloffs off the boundary, one per side, because one cannot do both
+  // jobs: a single wide one lights a large soft region and never produces an
+  // edge, a single tight one switches on at the boundary with no build-up.
+  //
+  //   wall    — inward from the surface. Lifts the interior hottest right at
+  //             the walls, which is what makes the shape a vessel rather than
+  //             a lit rectangle happening to be triangular.
+  //   contact — a thin band on both sides, the moment of arrival at the edge.
+  float wall = exp(-max(-triDist, 0.0) / max(radius * 0.30, 1e-4)) * inside;
+  float contact = exp(-abs(triDist) / max(radius * 0.05, 1e-4));
+  // The exterior's own gradient toward the shape: the ambient rain leans
+  // slightly warmer as it nears the vessel, so the two fields are one field.
+  float approach = exp(-max(triDist, 0.0) / max(radius * 0.20, 1e-4)) * outside;
 
   // ---- rain ----
   // Cells are a fixed CSS size, so glyphs stay legible at any triangle size.
@@ -171,21 +178,26 @@ void main() {
   // Calm at rest, full while a drop is in flight.
   float amount = mix(0.55, 1.0, u_rain);
 
-  // Multiplied by outside, so the interior contributes nothing at all — not
-  // dimmer glyphs, none. The ambient term is deliberately high: when the shape
-  // is negative space the surrounding rain is the only thing defining it, and
-  // at a dim 0.32 the void had nothing to be a void IN and simply vanished.
-  float gain = (1.30 + rim * 5.50 + contact * 6.00 + pointer * 0.45) * outside * density;
+  // The interior runs at roughly eight times the exterior, which is what makes
+  // the triangle the brightest thing on the screen. The exterior term is not
+  // zero on purpose: the ambient rain is what the interior is bright AGAINST,
+  // and dropping it entirely leaves a lit shape floating on nothing.
+  float interior = inside * (4.20 + wall * 2.60 + pointer * 0.50);
+  float exterior = outside * (0.55 + approach * 0.55 + pointer * 0.20);
+  float gain = (interior + exterior) * density;
 
   vec3 hot = vec3(0.55, 1.00, 0.62);
   vec3 faint = vec3(0.28, 0.40, 0.31);
-  vec3 rain = mask * trail * gain * amount * mix(faint, hot, clamp(rim + contact, 0.0, 1.0));
+  // Hot inside, faint outside, with the exterior warming as it approaches —
+  // the colour carries the same containment the gain does.
+  float warmth = clamp(inside + approach * 0.45 + contact * 0.6, 0.0, 1.0);
+  vec3 rain = mask * trail * gain * amount * mix(faint, hot, warmth);
 
-  // Glyphs at the surface blow out to white — the moment of contact, and what
-  // makes the edge legible as each one arrives at it. Keyed on contact and
-  // not rim, so the whiteout is a thin band at the boundary instead of a
-  // broad pale wash over everything near it.
-  rain += vec3(1.0) * mask * smoothstep(1.2, 4.0, trail) * contact * outside * amount * density * 1.3;
+  // Heads inside the vessel blow out to white. This is the top end of the
+  // whole image — nothing outside ever reaches it — and it is also what makes
+  // the walls legible, as each head crossing the surface flares against them.
+  rain += vec3(1.0) * mask * smoothstep(1.2, 4.0, trail)
+        * (inside * 0.85 + contact * 0.9) * amount * density * 1.3;
 
   // Failure recolours the same rain rather than adding a second language.
   if (u_error > 0.001) {
@@ -197,7 +209,12 @@ void main() {
 
   vec3 color;
   if (u_dark > 0.5) {
-    color = rain;
+    // Tone-mapped, not clipped. At interior gain most cells land well past 1
+    // and a hard clip turns the whole triangle into a flat white block —
+    // maximum output, no depth, no glyphs. Reinhard keeps the tails green and
+    // reserves white for the heads, so the shape stays the brightest thing on
+    // the screen AND stays legible as rain.
+    color = rain / (1.0 + rain * 0.45);
   } else {
     // On a light background the rain has to be ink, not light: emissive green
     // over white is invisible. Same signal, opposite polarity.
