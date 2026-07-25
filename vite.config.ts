@@ -10,8 +10,12 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
   test: {
+    // Node by default — the core services are deliberately testable without a
+    // DOM. Component tests opt into happy-dom per file with an
+    // `@vitest-environment happy-dom` docblock, so the fast majority of the
+    // suite doesn't pay for a DOM it never touches.
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
