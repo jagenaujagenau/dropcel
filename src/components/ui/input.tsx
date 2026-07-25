@@ -8,7 +8,10 @@ export const Input = React.forwardRef<
   <input
     ref={ref}
     className={cn(
-      "h-8 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-foreground placeholder:text-faint focus:border-border-strong focus:outline-none select-text",
+      // A field is a well, not a plate: text sits *in* it. `shadow-well` is
+      // the inverse of the buttons beside it, which is what stops a row of
+      // input + button from reading as two tiles of the same thing.
+      "h-8 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-foreground shadow-well placeholder:text-faint focus:border-border-strong focus:outline-none select-text",
       className,
     )}
     {...props}

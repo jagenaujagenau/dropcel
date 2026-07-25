@@ -182,6 +182,30 @@
   --shadow-card-hover: 0 2px 4px -1px var(--vbg-shadow-key),
     0 16px 32px -12px var(--vbg-shadow-ambient);
 
+  /*
+   * Materials → `shadow-raised`, `shadow-pressed`, `shadow-well`, `shadow-lip`.
+   *
+   * One light, above the screen. Everything that can be pressed is RAISED: a
+   * bright lip along its top edge where the light lands, a dark contact edge
+   * underneath, and a short cast shadow. Pressing INVERTS that — the light
+   * moves inside and the object sits in its own hole. Anything a control lives
+   * IN (a field, a track) is a WELL: shadowed at the top, with a lit bottom
+   * edge, because a recess catches light on the far wall.
+   *
+   * Both polarities are spelled out with light-dark() rather than one set of
+   * white alphas. On a light surface a highlight has to be near-opaque white
+   * to read at all, and on a dark one that same value looks like a chrome
+   * bezel — a single value cannot serve both, and the dark theme is where this
+   * goes wrong first.
+   */
+  --shadow-lip: inset 0 1px 0 light-dark(oklch(1 0 0 / 0.65), oklch(1 0 0 / 0.12));
+  --shadow-raised: inset 0 1px 0 light-dark(oklch(1 0 0 / 0.65), oklch(1 0 0 / 0.12)),
+    0 1px 1px light-dark(oklch(0 0 0 / 0.07), oklch(0 0 0 / 0.45)),
+    0 2px 4px -2px light-dark(oklch(0 0 0 / 0.14), oklch(0 0 0 / 0.6));
+  --shadow-pressed: inset 0 1px 2px light-dark(oklch(0 0 0 / 0.2), oklch(0 0 0 / 0.55));
+  --shadow-well: inset 0 1px 2px light-dark(oklch(0 0 0 / 0.14), oklch(0 0 0 / 0.5)),
+    inset 0 -1px 0 light-dark(oklch(1 0 0 / 0.55), oklch(1 0 0 / 0.05));
+
   --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
 }
@@ -358,6 +382,32 @@ body {
   animation: cursor-blink 1.06s step-end infinite;
 }
 
+/* A card turning into a terminal. The swap is a full unmount/remount — glass,
+   screenshot and metrics out, a terminal in — so without this the new card
+   simply blinks into existence mid-grid.
+
+   Opacity and transform only, so the whole thing runs on the compositor and
+   never asks for layout: animating height or the blur behind it means a
+   re-layout of the grid on every frame, which is exactly the hitch this is
+   meant to remove.
+
+   No `will-change`: a transform animation is already promoted for its own
+   duration, and the class stays on the card for as long as it deploys — so
+   declaring it here would pin a compositor layer per card long after the
+   220ms that needed one. */
+@keyframes terminal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.965);
+  }
+}
+.terminal-in {
+  animation: terminal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* The log inside repaints on every poll; containment keeps those repaints
+     from being able to affect anything outside the card. */
+  contain: paint;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drop-overlay,
   .dialog-backdrop,
@@ -366,6 +416,7 @@ body {
   .banner-in,
   .step-in,
   .icon-in,
+  .terminal-in,
   .cursor-blink {
     animation: none;
   }
