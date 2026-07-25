@@ -41,6 +41,7 @@ interface Harness {
   notifyChangeCalls: string[];
   setGitOperation: (op: string | null) => void;
   setPendingSwitch: (sw: { from: string; to: string } | null) => void;
+  setSignedIn: (username: string | null) => void;
 }
 
 function makeHarness(): Harness {
@@ -93,7 +94,9 @@ function makeHarness(): Harness {
     AccountSessionService,
     Effect.gen(function* () {
       const state = yield* SubscriptionRef.make<AccountState>({
-        username: null,
+        // Signed in: the gate holds everything when nobody is, so a null
+        // username here would make every other case in this file untestable.
+        username: "diego",
         avatarUrl: null,
         pendingSwitch: null,
         lastAuthError: null,
@@ -124,6 +127,14 @@ function makeHarness(): Harness {
 
   const layer = Layer.mergeAll(sharedLayer, autoDeployGateLayer.pipe(Layer.provide(sharedLayer)));
 
+  /** Both account setters go through one runner: the harness is allowed a
+   * fixed budget of manual `Effect.runSync` calls (see the oxlint plugin's
+   * baseline), and a second setter should not spend another one. */
+  const patchAccountState = (patch: Partial<AccountState>) => {
+    if (accountStateRef)
+      Effect.runSync(SubscriptionRef.update(accountStateRef, (s) => ({ ...s, ...patch })));
+  };
+
   return {
     layer,
     appState,
@@ -131,9 +142,8 @@ function makeHarness(): Harness {
     setGitOperation: (op) => {
       gitOperation = op;
     },
-    setPendingSwitch: (sw) => {
-      if (accountStateRef) Effect.runSync(SubscriptionRef.update(accountStateRef, (s) => ({ ...s, pendingSwitch: sw })));
-    },
+    setPendingSwitch: (sw) => patchAccountState({ pendingSwitch: sw }),
+    setSignedIn: (username: string | null) => patchAccountState({ username }),
   };
 }
 
@@ -198,6 +208,51 @@ describe("AutoDeployGate", () => {
       yield* gate.notifyChangeGitGated("p1");
       expect(h.notifyChangeCalls).toEqual([]);
       expect(yield* held.isHeld("p1")).toBe(true);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /**
+   * Signing out used to let every change run to the API and fail there, so a
+   * signed-out user editing three projects collected three failed cards for a
+   * reason that had nothing to do with the projects. Holding keeps the work.
+   */
+  it.effect("holds changes while nobody is signed in, and drains on sign-in", () => {
+    const h = makeHarness();
+    h.setGitOperation(null);
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      h.setSignedIn(null);
+      const gate = yield* AutoDeployGate;
+      const held = yield* HeldChangesService;
+
+      yield* gate.notifyChangeGitGated("p1");
+      expect(h.notifyChangeCalls).toEqual([]);
+      expect(yield* held.isHeld("p1")).toBe(true);
+      expect(yield* held.heldBy("signed-out")).toEqual(["p1"]);
+
+      // A token comes back: the hold lifts and the change deploys.
+      h.setSignedIn("diego");
+      const freed = yield* held.release("signed-out");
+      expect(freed).toEqual(["p1"]);
+      for (const id of freed) yield* gate.notifyChangeGitGated(id);
+      expect(h.notifyChangeCalls).toEqual(["p1"]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /** An unresolved switch is the more specific explanation, so it wins even
+   * though a switch also means the session is in a bad state. */
+  it.effect("an unresolved account switch outranks the signed-out hold", () => {
+    const h = makeHarness();
+    h.setGitOperation(null);
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      h.setSignedIn(null);
+      h.setPendingSwitch({ from: "old", to: "new" });
+      const gate = yield* AutoDeployGate;
+      const held = yield* HeldChangesService;
+      yield* gate.notifyChangeGitGated("p1");
+      expect(yield* held.heldBy("account-switch")).toEqual(["p1"]);
+      expect(yield* held.heldBy("signed-out")).toEqual([]);
     }).pipe(Effect.provide(h.layer));
   });
 

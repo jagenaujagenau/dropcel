@@ -389,6 +389,7 @@ const HOLD_LABELS: Record<HoldReason, string> = {
   offline: "Held — offline",
   "account-switch": "Held — account switch",
   "git-operation": "Held — git operation",
+  "signed-out": "Held — signed out",
 };
 
 /** Why this project's changes haven't deployed yet — the global offline pill

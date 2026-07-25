@@ -395,8 +395,31 @@ export function refreshAuth(): Promise<void> {
   // The account cache is refreshed on the way out, not by refreshIdentity
   // itself: identity writes the accounts row, and the render layer reads it
   // back through its own atom, so the read has to happen after the write.
-  return Effect.runPromise(accountSessionShape.refreshIdentity).then(() =>
-    refreshAccounts().catch(() => {}),
+  return Effect.runPromise(accountSessionShape.refreshIdentity)
+    .then(() => refreshAccounts().catch(() => {}))
+    .then(() => releaseSignedOutHolds());
+}
+
+/**
+ * A token came back — drain whatever piled up while there wasn't one.
+ *
+ * Runs after every identity refresh rather than only after a sign-in: a
+ * refresh is also what discovers an expired token has been renewed, and the
+ * hold has to lift on that path too. Releasing a reason nobody is holding is
+ * a no-op, so the common case costs nothing.
+ */
+async function releaseSignedOutHolds(): Promise<void> {
+  const signedIn = Effect.runSync(
+    SubscriptionRef.get(accountSessionShape.state),
+  ).username;
+  if (!signedIn) return;
+  managedRuntime.runFork(
+    Effect.gen(function* () {
+      const held = yield* HeldChangesService;
+      const gate = yield* AutoDeployGate;
+      const freed = yield* held.release("signed-out");
+      for (const id of freed) yield* gate.notifyChangeGitGated(id);
+    }),
   );
 }
 

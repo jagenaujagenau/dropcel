@@ -13,7 +13,10 @@ import { Ipc } from "./ipc";
  * and every operation is a synchronous Effect.
  */
 
-export type HoldReason = "offline" | "account-switch" | "git-operation";
+/** `signed-out` is a hold, not a failure: without a token every deploy would
+ * run and die at the API, one error per changed project. Holding keeps the
+ * work and drains it when a token comes back. */
+export type HoldReason = "offline" | "account-switch" | "git-operation" | "signed-out";
 
 export interface HeldChangesOptions {
   /** Persist the offline component; sequenced on every change to it. */

@@ -5,6 +5,7 @@ import {
   ArrowUpCircle,
   FolderOpen,
   Loader2,
+  LogIn,
   Pause,
   Search,
   Settings as SettingsIcon,
@@ -175,6 +176,21 @@ export default function App() {
           >
             <WifiOff className="h-3 w-3" /> Offline — changes held
           </span>
+        )}
+        {/* Signed out is the same shape of problem as offline: the work is
+            kept, not lost, and it goes out when the cause clears. Saying so
+            is the whole point — without it a signed-out user watches nothing
+            happen and has no way to know the app is waiting rather than
+            broken. Suppressed while offline, which is the more immediate
+            reason and already has the user's attention. */}
+        {online && !authedAs && (
+          <button
+            className="flex items-center gap-1 rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning hover:bg-warning/15"
+            title="Changes are held until you sign in to Vercel."
+            onClick={() => setRoute({ name: "settings" })}
+          >
+            <LogIn className="h-3 w-3" /> Signed out — changes held
+          </button>
         )}
         <UpdatePill status={updateStatus} />
         {/*

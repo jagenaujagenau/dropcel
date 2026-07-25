@@ -134,6 +134,18 @@ export const make = (deps: { ipc: IpcShape; appState: AppStateShape }) =>
         yield* held.mark(projectId, "account-switch");
         return;
       }
+      /*
+        No token, no deploy. Without this the change goes all the way to the
+        API and fails there — so signing out and editing three projects left
+        three cards showing errors, for a reason that has nothing to do with
+        the projects. Held, they simply wait, and drain when a token returns.
+        Checked after the switch so an unresolved switch still wins: it is the
+        more specific explanation.
+      */
+      if (!accountState.username) {
+        yield* held.mark(projectId, "signed-out");
+        return;
+      }
       const git = yield* refreshGit(projectId);
       const verdict = shouldHoldAutoDeploy(git, project.lockedBranch);
       if (!verdict.hold) {
