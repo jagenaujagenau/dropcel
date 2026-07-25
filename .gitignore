@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 tmp/
+
+# Claude Code machine-local permission grants — not shared
+.claude/settings.local.json

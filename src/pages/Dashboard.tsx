@@ -30,6 +30,7 @@ import {
 } from "../core/atoms";
 import type { HoldReason } from "../core/held-changes";
 import { LogViewerDialog } from "../components/LogViewerDialog";
+import { BuildLogTerminal } from "../components/BuildLogTerminal";
 import { FrameworkLogo } from "../components/FrameworkLogo";
 import {
   DeploymentDuration,
@@ -189,12 +190,44 @@ function ViewButton({
   );
 }
 
-function UrlLine({ url, className }: { url: string; className?: string }) {
+/** A label above a value, for the card's stats row. */
+function Metric({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <p className="text-[10px] uppercase tracking-wider text-white/50">{label}</p>
+      <div className="mt-0.5 text-[11px] tabular-nums text-white/90">{children}</div>
+    </div>
+  );
+}
+
+function UrlLine({
+  url,
+  className,
+  tone = "default",
+}: {
+  url: string;
+  className?: string;
+  /** `onGlass` sits over the card's dark glass panel, where the muted/faint
+   * tokens are near-invisible and the ink has to be white. */
+  tone?: "default" | "onGlass";
+}) {
   const [copied, setCopied] = useState(false);
+  const glass = tone === "onGlass";
   return (
     <div className={cn("flex min-w-0 items-center gap-1.5", className)}>
       <button
-        className="flex min-w-0 items-center gap-1 text-xs text-muted hover:text-foreground"
+        className={cn(
+          "flex min-w-0 items-center gap-1 text-xs",
+          glass ? "text-white/70 hover:text-white" : "text-muted hover:text-foreground",
+        )}
         onClick={(e) => {
           e.stopPropagation();
           void openUrl(url);
@@ -207,7 +240,10 @@ function UrlLine({ url, className }: { url: string; className?: string }) {
         <ExternalLink className="h-3 w-3 shrink-0" />
       </button>
       <button
-        className="shrink-0 text-muted hover:text-foreground"
+        className={cn(
+          "shrink-0",
+          glass ? "text-white/70 hover:text-white" : "text-muted hover:text-foreground",
+        )}
         title="Copy URL"
         onClick={(e) => {
           e.stopPropagation();
@@ -258,7 +294,9 @@ function MenuButton({
         // user could tab to this button and see nothing at all — the focus
         // ring rendered on an invisible element. Hover-reveal is fine for the
         // mouse; it must not be the *only* way to make the control appear.
-        "rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-surface-hover hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100",
+        // Sits over the card's screenshot, so it carries its own translucent
+        // plate rather than relying on the app surface behind it.
+        "rounded-full bg-black/35 p-1.5 text-white/90 opacity-0 backdrop-blur-md transition-opacity hover:bg-black/55 hover:text-white group-hover:opacity-100 focus-visible:opacity-100",
         className,
       )}
       aria-haspopup="menu"
@@ -327,9 +365,9 @@ function FrameworkChip({ framework }: { framework: Framework }) {
     <div
       title={FRAMEWORK_LABELS[framework] ?? framework}
       style={{ background: frameworkChip(framework) }}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg shadow-sm"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full shadow-sm ring-1 ring-white/20"
     >
-      <FrameworkLogo framework={framework} className="h-[18px] w-[18px] object-contain" />
+      <FrameworkLogo framework={framework} className="h-[15px] w-[15px] object-contain" />
     </div>
   );
 }
@@ -354,8 +392,10 @@ function StatusPill({
   if (!isDeploying(state)) return null;
   return (
     <span
+      // Solid white, not a tinted outline: this sits over an arbitrary
+      // screenshot, where a translucent pill can land on anything.
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-warning/30 bg-warning/12 px-2 py-0.5 text-[11px] font-medium text-warning",
+        "inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-[oklch(0.28_0_0)] shadow-sm",
         className,
       )}
     >
@@ -377,6 +417,52 @@ const STATUS_PILL_LABELS: Record<string, string> = {
   canceled: "Canceled",
 };
 
+/**
+ * A deploying card, as an actual terminal window: title bar with traffic
+ * lights, the live build log filling the frame, a blinking caret.
+ *
+ * A separate branch rather than a mode of the normal card, because almost
+ * nothing carries over — the glass, the scrim, the screenshot and the metrics
+ * row all exist to frame an image, and layering a readable log on top of them
+ * meant fighting every one of them.
+ */
+function DeployingCard({
+  project,
+  deployment,
+  onContextMenu,
+}: {
+  project: Project;
+  deployment: Deployment;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <div
+      className="group relative flex aspect-[4/5] flex-col overflow-hidden rounded-[14px] bg-[oklch(0.145_0.008_265)] shadow-[0_6px_24px_-10px_rgba(0,0,0,0.5)] ring-1 ring-inset ring-white/10"
+      onContextMenu={onContextMenu}
+    >
+      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.05] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]">
+        <span aria-hidden className="flex shrink-0 gap-[5px]">
+          <i className="h-[9px] w-[9px] rounded-full bg-[#ff5f57]" />
+          <i className="h-[9px] w-[9px] rounded-full bg-[#febc2e]" />
+          <i className="h-[9px] w-[9px] rounded-full bg-[#28c840]" />
+        </span>
+        <span
+          className="truncate font-mono text-[10px] text-white/55"
+          title={`${project.name} — ${STATUS_PILL_LABELS[deployment.state] ?? deployment.state}`}
+        >
+          {project.name} — {(STATUS_PILL_LABELS[deployment.state] ?? "").toLowerCase()}
+        </span>
+        {/* Elapsed lives up here because the terminal has no footer to put it
+            in, and "how long has this been going" is the question a watched
+            build actually raises. */}
+        <DeploymentTiming deployment={deployment} className="ml-auto shrink-0 text-white/45" />
+        <MenuButton onOpen={onContextMenu} className="-mr-0.5 shrink-0" />
+      </div>
+      <BuildLogTerminal deploymentId={deployment.id} live className="min-h-0 flex-1" />
+    </div>
+  );
+}
+
 function ProjectCard({
   project,
   onContextMenu,
@@ -390,6 +476,11 @@ function ProjectCard({
 
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const accent = frameworkAccent(project.framework);
+  if (latest && isDeploying(latest.state)) {
+    return (
+      <DeployingCard project={project} deployment={latest} onContextMenu={onContextMenu} />
+    );
+  }
 
   return (
     <div
@@ -401,126 +492,161 @@ function ProjectCard({
           "--card-bg": "color-mix(in oklab, var(--fw) 5%, var(--color-surface))",
         } as React.CSSProperties
       }
-      className="group relative flex aspect-square flex-col overflow-hidden rounded-xl border border-border p-3.5 transition-colors duration-300 ease-out hover:border-border-hover [background:var(--card-bg)]"
+      // rounded-[14px] rather than rounded-xl: the brand radius tops out at
+      // 8px, which reads as a panel rather than as glass. Applied here only,
+      // so the token — and every other surface — is left alone.
+      className="group relative aspect-[4/5] overflow-hidden rounded-[14px] shadow-[0_6px_24px_-10px_rgba(0,0,0,0.5)] ring-1 ring-inset ring-white/15 [background:linear-gradient(150deg,color-mix(in_oklab,var(--fw)_22%,var(--color-surface)),var(--card-bg))]"
       onContextMenu={onContextMenu}
     >
       {/*
-        The snapshot is card furniture, not content: it bleeds to the edges and
-        dissolves into the tint before it reaches the title. Empty alt +
-        aria-hidden because the name and status beside it already say
+        The snapshot is the card. It fills the frame at full strength rather
+        than sitting behind a tint — everything legible is carried by the glass
+        panel below, so the image never has to be dimmed to make room for text.
+        Empty alt + aria-hidden: the name and status beside it already say
         everything this conveys.
       */}
-      {snapshot && (
-        <>
-          <img
-            src={snapshot}
-            alt=""
-            aria-hidden
-            draggable={false}
-            className="pointer-events-none absolute inset-x-0 top-0 h-full w-full object-cover object-top opacity-[0.45]"
+      {snapshot ? (
+        <img
+          src={snapshot}
+          alt=""
+          aria-hidden
+          draggable={false}
+          className="absolute inset-0 h-full w-full object-cover object-top"
+        />
+      ) : (
+        // No snapshot yet: the framework's own mark on its gradient, so the
+        // card still reads as *this* project rather than as an empty slot.
+        <div aria-hidden className="absolute inset-0 flex items-center justify-center">
+          <FrameworkLogo
+            framework={project.framework as Framework}
+            className="h-12 w-12 opacity-25 [filter:brightness(0)_invert(1)]"
           />
-          {/*
-            Frosted glass rather than a flat scrim: a blur that fades in down
-            the card, so the snapshot stays sharp at the top and dissolves
-            behind the text instead of simply being covered by an opaque
-            gradient. `backdrop-filter` is what does the work — the translucent
-            card colour on top only tints it.
-          */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 backdrop-blur-lg backdrop-saturate-150 [background:color-mix(in_oklab,var(--card-bg)_74%,transparent)]"
-            style={{
-              maskImage: "linear-gradient(to bottom, transparent 0%, transparent 16%, #000 56%, #000 100%)",
-              WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, transparent 16%, #000 56%, #000 100%)",
-            }}
-          />
-        </>
+        </div>
       )}
-      {/* Accent wash, tying snapshot and tint together. */}
+
+      {/*
+        The card IS the glass — one pane over the whole screenshot, not a photo
+        with a frosted strip laid across the bottom. Four things make it read
+        as glass rather than as a blur:
+          - vibrancy: blur plus a saturation boost, so the site's own colour
+            survives instead of greying out;
+          - a faint fill, giving the pane substance;
+          - a specular highlight along the top lip, where light catches the
+            edge of real glass;
+          - the ring and drop shadow on the card itself, for thickness.
+      */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 [background:linear-gradient(160deg,color-mix(in_oklab,var(--fw)_5%,transparent),transparent_62%)]"
+        className="pointer-events-none absolute inset-0 bg-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.28)] backdrop-blur-[14px] backdrop-saturate-[180%]"
       />
 
-      <div className="relative flex items-start justify-between gap-3">
+      {/*
+        Gradient scrim over the glass. This is what makes the white text safe,
+        which is what lets the glass panel below stay light — carrying the
+        contrast on the frost alone meant a heavy opaque slab, and dropping the
+        frost without this left the title sitting on whatever the screenshot
+        happened to contain.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.45) 22%, rgba(0,0,0,0.08) 45%, transparent 62%)",
+        }}
+      />
+
+      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3">
         <FrameworkChip framework={project.framework as Framework} />
         {/*
-          Pill and kebab share one slot and cross-fade. Side by side, the
-          kebab reserved its width while invisible and pushed the pill off the
-          card's right padding — and the same trick in the footer pushed the
-          Auto switch off it too. Stacked, both stay flush and nothing moves
-          on hover.
+          Pill and kebab share one slot and cross-fade, in a box with the
+          chip's height. Side by side the hover-hidden kebab reserved its
+          width and pushed the pill off the card's padding; and with the pill
+          deploy-only, an unsized box collapsed and left the kebab with
+          nothing to centre against.
         */}
-        {/*
-          Fixed height, matching the chip beside it. The pill only renders
-          while deploying, so without it this box collapsed to zero height on
-          every idle card and the absolutely-positioned kebab had nothing to
-          centre against — it hung above the chip instead of level with it.
-        */}
-        <div className="relative flex h-8 shrink-0 items-center justify-end">
+        <div className="relative flex h-7 shrink-0 items-center justify-end">
           <StatusPill
             deployment={latest}
             className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
           />
-          <MenuButton
-            onOpen={onContextMenu}
-            className="absolute right-0 top-1/2 -translate-y-1/2"
-          />
+          <MenuButton onOpen={onContextMenu} className="absolute right-0 top-1/2 -translate-y-1/2" />
         </div>
       </div>
 
-      {/* Content sits at the bottom of the square; the snapshot gets the top. */}
-      <div className="flex-1" />
-
-      <div className="relative min-w-0">
-        <h3
-          className="truncate text-[15px] font-semibold tracking-tight [color:var(--fw)]"
-          title={project.name}
-        >
+      {/*
+        The glass panel. `backdrop-blur` frosts whatever part of the screenshot
+        sits behind it and the dark layer on top guarantees the contrast: white
+        text over an arbitrary screenshot is otherwise a coin toss, unreadable
+        the moment someone deploys a light-coloured site. Dark in both themes
+        for the same reason — the text colour cannot depend on the image.
+      */}
+      {/* Content sits directly on the pane — no second sheet of glass. */}
+      <div className="absolute inset-x-0 bottom-0 px-3.5 pb-3 pt-3">
+        <h3 className="truncate text-[15px] font-semibold tracking-tight text-white" title={project.name}>
           {project.name}
         </h3>
-        {url ? (
-          <UrlLine url={url} className="mt-0.5" />
-        ) : (
-          <p className="mt-0.5 text-xs text-faint">Not deployed yet</p>
-        )}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <GitBadge project={project} />
-          <LockBadge project={project} />
-          <HeldBadge project={project} />
-          {project.remoteRepo && (
-            <Badge variant="success" title={`Pushes to ${project.remoteRepo} deploy this project`}>
-              git-connected
-            </Badge>
-          )}
-        </div>
-      </div>
-
-      {latest?.state === "failed" && latest.error && (
-        <div className="banner-in relative mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs leading-relaxed text-danger">
-          <p>{latest.error}</p>
+        {/*
+          The failure replaces the URL rather than being a banner of its own.
+          As an absolutely-positioned strip across the top it covered the
+          framework chip and the kebab, and a card cannot afford to hide its
+          own controls to show an error.
+        */}
+        {latest?.state === "failed" && latest.error ? (
           <button
-            className="mt-1 font-medium underline decoration-danger/40 underline-offset-2 hover:decoration-danger"
+            className="mt-0.5 block w-full text-left"
             onClick={(e) => {
               e.stopPropagation();
               setLogsOpen(true);
             }}
           >
-            View build log
+            <span className="line-clamp-2 text-[11px] leading-snug text-[oklch(0.85_0.14_23)]">
+              {latest.error}
+            </span>
+            <span className="mt-0.5 block text-[11px] font-medium text-white/80 underline underline-offset-2">
+              View build log
+            </span>
           </button>
-        </div>
-      )}
+        ) : url ? (
+          <UrlLine url={url} className="mt-0.5" tone="onGlass" />
+        ) : (
+          <p className="mt-0.5 text-xs text-white/60">Not deployed yet</p>
+        )}
 
-      <div className="relative mt-3 flex items-center justify-between gap-2 border-t border-[color-mix(in_oklab,var(--fw)_10%,var(--color-border))] pt-3">
-        <DeploymentTiming deployment={latest} />
-        <span
-          className="flex shrink-0 items-center gap-2"
-          title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
-        >
-          <span className="text-[11px] text-faint">Auto</span>
-          <AutoSwitch project={project} />
-        </span>
+        {(project.remoteRepo || project.lockedBranch) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <GitBadge project={project} />
+            <LockBadge project={project} />
+            <HeldBadge project={project} />
+          </div>
+        )}
+
+        <div className="mt-2.5 grid grid-cols-3 divide-x divide-white/15 border-t border-white/15 pt-2.5">
+          <Metric label="Deployed">
+            {latest ? (
+              <DeploymentTiming deployment={latest} className="text-white/90" />
+            ) : (
+              <span className="text-white/50">—</span>
+            )}
+          </Metric>
+          <Metric label="Build" className="px-2">
+            {latest ? (
+              <DeploymentDuration deployment={latest} className="text-white/90" />
+            ) : (
+              <span className="text-white/50">—</span>
+            )}
+          </Metric>
+          <Metric label="Auto" className="pl-2">
+            <span
+              className="flex items-center"
+              title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
+            >
+              <AutoSwitch project={project} />
+            </span>
+          </Metric>
+        </div>
       </div>
+
       {logsOpen && latest && (
         <LogViewerDialog
           deploymentId={latest.id}
