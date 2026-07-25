@@ -1,6 +1,6 @@
 //! Build-time asset generator for the committed folder artwork. Nothing here
 //! ships: the runtime links the pre-composited PNGs via include_bytes!.
-//! Regenerate public/icons/mac and public/icons/win with:
+//! Regenerate assets/icons/mac and assets/icons/win with:
 //!   cargo test generate_folder_icons -- --ignored
 //! (Reads the genuine macOS folder from CoreTypes, so run on a Mac.)
 
@@ -191,17 +191,17 @@ fn pixmap_to_image(pixmap: &resvg::tiny_skia::Pixmap) -> RgbaImage {
 /// `other.svg` is the fallback for unknown/static projects.
 fn framework_svg(framework: &str) -> &'static [u8] {
     match framework {
-        "nextjs" => include_bytes!("../../../public/icons/next-dark.svg"),
-        "nuxt" => include_bytes!("../../../public/icons/nuxt.svg"),
-        "astro" => include_bytes!("../../../public/icons/astro-dark.svg"),
-        "remix" => include_bytes!("../../../public/icons/remix-no-shadow.svg"),
-        "svelte" => include_bytes!("../../../public/icons/svelte.svg"),
-        "vue" => include_bytes!("../../../public/icons/vue.svg"),
-        "vite" => include_bytes!("../../../public/icons/vite.svg"),
-        "react" => include_bytes!("../../../public/icons/react.svg"),
-        "hono" => include_bytes!("../../../public/icons/hono.svg"),
-        "express" => include_bytes!("../../../public/icons/express-dark.svg"),
-        _ => include_bytes!("../../../public/icons/other.svg"),
+        "nextjs" => include_bytes!("../../../assets/icons/next-dark.svg"),
+        "nuxt" => include_bytes!("../../../assets/icons/nuxt.svg"),
+        "astro" => include_bytes!("../../../assets/icons/astro-dark.svg"),
+        "remix" => include_bytes!("../../../assets/icons/remix-no-shadow.svg"),
+        "svelte" => include_bytes!("../../../assets/icons/svelte.svg"),
+        "vue" => include_bytes!("../../../assets/icons/vue.svg"),
+        "vite" => include_bytes!("../../../assets/icons/vite.svg"),
+        "react" => include_bytes!("../../../assets/icons/react.svg"),
+        "hono" => include_bytes!("../../../assets/icons/hono.svg"),
+        "express" => include_bytes!("../../../assets/icons/express-dark.svg"),
+        _ => include_bytes!("../../../assets/icons/other.svg"),
     }
 }
 
@@ -300,13 +300,13 @@ fn tile_png(framework: &str) -> Option<Vec<u8>> {
     Some(out.into_inner())
 }
 
-/// One-shot: make public/icon.png's black matte transparent. Flood
+/// One-shot: make assets/icon.png's black matte transparent. Flood
 /// fills near-black from the canvas borders, so dark pixels INSIDE the
 /// tile are untouched. Run: cargo test strip_app_icon_matte -- --ignored
 #[test]
 #[ignore]
 fn strip_app_icon_matte() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../public/icon.png");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/icon.png");
     let mut img = image::open(&path).unwrap().to_rgba8();
     let (w, h) = img.dimensions();
     let is_bg = |px: &image::Rgba<u8>| px.0[0].max(px.0[1]).max(px.0[2]) < 24;
@@ -389,13 +389,13 @@ fn generate_set(folder: &RgbaImage, out_dir: &std::path::Path, glyph_center_y: f
         make(framework_svg(key), fw);
     }
 
-    // The full library: every other SVG in public/icons.
+    // The full library: every other SVG in assets/icons.
     let canonical_sources = [
         "next-dark.svg", "nuxt.svg", "astro-dark.svg", "remix-no-shadow.svg",
         "svelte.svg", "vue.svg", "vite.svg", "react.svg", "hono.svg",
         "express-dark.svg", "other.svg",
     ];
-    let icons_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../public/icons");
+    let icons_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/icons");
     for entry in std::fs::read_dir(&icons_dir).unwrap() {
         let path = entry.unwrap().path();
         let Some(fname) = path.file_name().and_then(|n| n.to_str()) else { continue };
@@ -414,13 +414,13 @@ fn generate_set(folder: &RgbaImage, out_dir: &std::path::Path, glyph_center_y: f
 
 /// One-shot asset generator: blends the Vercel triangle and every
 /// framework logo into folder artwork — the genuine macOS folder (read
-/// from CoreTypes on this machine) → public/icons/mac/, and the vendored
-/// Windows folder (public/icons/windows-folder.png) → public/icons/win/.
+/// from CoreTypes on this machine) → assets/icons/mac/, and the vendored
+/// Windows folder (assets/icons/windows-folder.png) → assets/icons/win/.
 /// Run: cargo test generate_folder_icons -- --ignored
 #[test]
 #[ignore]
 fn generate_folder_icons() {
-    let icons_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../public/icons");
+    let icons_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/icons");
 
     let raw = std::fs::read(SYSTEM_FOLDER_ICNS).expect("system folder icns");
     let png = best_icns_png(&raw).expect("png rep in icns");
