@@ -148,7 +148,21 @@ export function Dashboard() {
       {matching.length === 0 ? (
         <p className="mt-8 text-center text-xs text-faint">No projects match "{search.trim()}".</p>
       ) : view === "grid" ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(208px,248px))] gap-3">
+        // `1fr` as the track maximum, not a 248px cap: with a fixed cap the
+        // columns keep their width and whatever the container has left over
+        // piles up as dead space on the right, which at some window widths was
+        // most of a card. Letting the tracks stretch spends that space evenly
+        // across every card instead. 208px is still the minimum, so the column
+        // count changes at the same widths it always did — the cards just fill
+        // the row they land in.
+        //
+        // 264px minimum, up from 208. At 208 a card was barely wider than the
+        // 19px name and three metrics it has to hold, and the snapshot — the
+        // thing the card is mostly made of — was a thumbnail. The gap grows
+        // with it: 12px between cards that size read as a contact sheet, where
+        // the cards run together into one field rather than being separate
+        // objects.
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(264px,1fr))] gap-5">
           {matching.map((p) => (
             <ProjectCard key={p.id} project={p} onContextMenu={onRowMenu(p)} />
           ))}

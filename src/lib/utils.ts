@@ -34,3 +34,18 @@ export function formatElapsed(startedAtIso: string, now: number): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
+
+/**
+ * `/Users/ada/Vercel` → `~/Vercel`, for showing a path in a space where the
+ * home prefix is noise — it is the same for every path the user will ever see
+ * here, so it carries no information and costs the part that does.
+ *
+ * Pattern-matched rather than asking the OS for the home directory: this is
+ * display-only, it must not be async, and a path that does not match is simply
+ * shown whole. Covers macOS (`/Users/x`), Linux (`/home/x`) and Windows
+ * (`C:\Users\x`).
+ */
+export function tildeAbbreviate(path: string): string {
+  if (!path) return "";
+  return path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, "~");
+}

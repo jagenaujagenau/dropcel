@@ -23,6 +23,7 @@ import {
   onboardedAtom,
   onlineAtom,
   resolveAccountSwitch,
+  rootFolderAtom,
   routeAtom,
   setOnboardedLocal,
   setRoute,
@@ -33,6 +34,7 @@ import {
 import { start as startApp } from "./core/composition";
 import type { UpdateStatus } from "./core/updater";
 import * as ipc from "./lib/ipc";
+import { tildeAbbreviate } from "./lib/utils";
 import { Dashboard } from "./pages/Dashboard";
 import { Onboarding } from "./pages/Onboarding";
 import { Settings } from "./pages/Settings";
@@ -84,6 +86,7 @@ export default function App() {
   const authedAs = accountState.username;
   const accountSwitch = accountState.pendingSwitch;
   const onboarded = useAtomState(onboardedAtom, null);
+  const rootFolder = useAtomState(rootFolderAtom, "");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteLogs, setPaletteLogs] = useState<{ deployment: Deployment; name: string } | null>(
     null,
@@ -174,6 +177,14 @@ export default function App() {
           </span>
         )}
         <UpdatePill status={updateStatus} />
+        {/*
+          Actions only. The account moved to the status bar and the folder
+          button with it: the top-right was carrying four different control
+          shapes in a row — a bordered kbd chip, a bare avatar and name, a
+          labelled ghost button and an icon button — which is what made it read
+          as a pile rather than a toolbar. What is left is the two things you
+          press to go somewhere, at one size.
+        */}
         <div className="ml-auto flex items-center gap-1">
           {/* The palette is keyboard-first, but a shortcut nobody knows about
               may as well not exist — this is its discovery surface. */}
@@ -185,15 +196,6 @@ export default function App() {
             <Search className="h-3 w-3" />
             <kbd className="font-sans">⌘K</kbd>
           </button>
-          {authedAs && (
-            <span className="mr-1 flex items-center gap-1.5 text-[11px] text-faint">
-              <UserAvatar />
-              {authedAs}
-            </span>
-          )}
-          <Button variant="ghost" size="sm" onClick={() => void ipc.fs.openRootFolder()}>
-            <FolderOpen className="h-3.5 w-3.5" /> Open Folder
-          </Button>
           {route.name === "settings" ? (
             <Button variant="ghost" size="icon" onClick={() => setRoute({ name: "dashboard" })} title="Back">
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -244,6 +246,43 @@ export default function App() {
         )}
         {route.name === "settings" ? <Settings /> : <Dashboard />}
       </main>
+
+      {/*
+        Status bar: who you are on the left, what folder you are looking at on
+        the right. Neither is an action the way ⌘K and Settings are — the
+        account is ambient state, and the folder is the app's subject rather
+        than a place to navigate to — which is why they read as clutter up in
+        the toolbar and read as context down here.
+
+        The folder is shown by name, not as "Open Folder". A button labelled
+        with its target says where it goes; a button labelled with its verb
+        makes you remember.
+      */}
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-1.5 text-[11px] text-faint">
+        {authedAs ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <UserAvatar />
+            <span className="truncate">{authedAs}</span>
+          </span>
+        ) : (
+          // Not a dead slot: signed out is worth saying, and it is the reason
+          // deploys are failing if they are.
+          <button
+            className="transition-colors hover:text-muted"
+            onClick={() => setRoute({ name: "settings" })}
+          >
+            Not signed in
+          </button>
+        )}
+        <button
+          onClick={() => void ipc.fs.openRootFolder()}
+          title={rootFolder || "Open the sync folder"}
+          className="flex min-w-0 shrink-0 items-center gap-1.5 transition-colors hover:text-muted"
+        >
+          <FolderOpen className="h-3 w-3 shrink-0" />
+          <span className="truncate font-mono">{tildeAbbreviate(rootFolder)}</span>
+        </button>
+      </footer>
 
       <DropZone />
 
