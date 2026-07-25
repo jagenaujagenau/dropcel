@@ -325,11 +325,7 @@ function UpdatesSection() {
 
   return (
     <Section title="Updates">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs">Dropcel {version}</p>
-          <p className="mt-0.5 text-[11px] text-faint">{updateStatusLabel(status)}</p>
-        </div>
+      <Row label={`Dropcel ${version}`} hint={updateStatusLabel(status)}>
         {status._tag === "available" ? (
           <Button size="sm" onClick={() => void install()}>
             <CheckCircle2 className="h-3.5 w-3.5" /> Update
@@ -344,7 +340,7 @@ function UpdatesSection() {
             Check for Updates
           </Button>
         )}
-      </div>
+      </Row>
     </Section>
   );
 }
@@ -359,12 +355,50 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-surface p-4">
+    // `shadow-lip` is the whole skeuomorphic claim a panel needs: a lit top
+    // edge says the surface has thickness and is sitting on the page rather
+    // than being painted onto it. Anything more — a fill gradient, a bevel —
+    // and eight stacked panels start competing with the controls inside them,
+    // which are the things that actually want to look touchable.
+    <section className="rounded-xl border border-border bg-surface p-4 shadow-lip">
       <h3 className="text-sm font-medium">{title}</h3>
       {description && <p className="mt-0.5 text-xs text-muted">{description}</p>}
       <div className="mt-3">{children}</div>
     </section>
   );
+}
+
+/**
+ * One setting: what it is on the left, the control on the right.
+ *
+ * Every row on this page is that shape, and six hand-rolled copies of it had
+ * drifted apart — different label sizes, and separators that were a `border-t`
+ * on some rows and nothing on others, so which settings looked grouped
+ * depended on which block had been edited last. `Rows` owns the separators so
+ * a row can be moved between sections without carrying spacing with it.
+ */
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+      <div className="min-w-0">
+        <p className="text-xs">{label}</p>
+        {hint && <p className="mt-0.5 text-[11px] text-faint">{hint}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function Rows({ children }: { children: React.ReactNode }) {
+  return <div className="divide-y divide-border">{children}</div>;
 }
 
 export function Settings() {
@@ -391,27 +425,20 @@ export function Settings() {
   }, []);
 
   return (
+    /*
+      Ordered by what the app is: the folder it watches, the account it deploys
+      to, then the app's own chrome, then maintenance. Sections group by what a
+      setting DOES, not by where it happens to be stored — "copy the URL when a
+      deployment is ready" was filed under System, next to launch-at-login,
+      when it is a deploy behaviour and belongs beside pause-watching; and
+      Updates sat second, above both of the things this app is actually for.
+    */
     <div className="mx-auto max-w-xl space-y-4 p-6">
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
       </div>
 
-      <Section title="Appearance">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs">Theme</p>
-            <p className="text-[11px] text-faint">Overrides the OS preference.</p>
-          </div>
-          <ThemeToggle />
-        </div>
-      </Section>
-
-      <UpdatesSection />
-
-      <Section
-        title="Sync Folder"
-        description="Everything in this folder deploys automatically."
-      >
+      <Section title="Deploys" description="Everything in this folder deploys automatically.">
         <div className="flex items-center gap-2">
           <Input value={rootFolder} readOnly className="font-mono text-xs" />
           <Button
@@ -429,72 +456,71 @@ export function Settings() {
             Change…
           </Button>
         </div>
-        <div className="mt-3 flex items-center justify-between">
-          <div>
-            <p className="text-xs">Pause watching</p>
-            <p className="text-[11px] text-faint">Stops auto deploys.</p>
-          </div>
-          <Switch
-            checked={watchPaused}
-            aria-label="Pause watching"
-            onCheckedChange={async (v) => {
-              await ipc.fs.setWatchPaused(v);
-              setWatchPaused(v);
-            }}
-          />
+        <div className="mt-3">
+          <Rows>
+            <Row label="Pause watching" hint="Stops auto deploys.">
+              <Switch
+                checked={watchPaused}
+                aria-label="Pause watching"
+                onCheckedChange={async (v) => {
+                  await ipc.fs.setWatchPaused(v);
+                  setWatchPaused(v);
+                }}
+              />
+            </Row>
+            <Row label="Copy URL when a deployment is ready" hint="Ready to paste anywhere.">
+              <Switch
+                checked={copyOnReady}
+                aria-label="Copy URL when ready"
+                onCheckedChange={async (v) => {
+                  setCopyOnReady(v);
+                  await ipc.db.setSetting("copy_url_on_ready", v ? "1" : "0");
+                }}
+              />
+            </Row>
+          </Rows>
         </div>
       </Section>
 
-      <Section
-        title="Vercel Account"
-        description="Stored in your system keychain."
-      >
+      <Section title="Vercel Account" description="Stored in your system keychain.">
         {authedAs ? <SignedIn /> : <SignedOut />}
       </Section>
+
+      {/* Renders nothing unless a project's folder has actually left the sync
+          folder — which is why it can sit here, mid-page and next to what it
+          is about, without leaving a hole in the layout the rest of the time. */}
+      <RemovedProjects />
+
+      <Section title="Application">
+        <Rows>
+          <Row label="Theme" hint="Overrides the OS preference.">
+            <ThemeToggle />
+          </Row>
+          <Row label="Launch at login" hint="Deploys keep running in the background.">
+            <Switch
+              checked={autostart}
+              aria-label="Launch at login"
+              onCheckedChange={async (v) => {
+                try {
+                  if (v) await enable();
+                  else await disable();
+                  setAutostart(await isEnabled());
+                } catch {
+                  /* unsupported in dev builds on some platforms */
+                }
+              }}
+            />
+          </Row>
+        </Rows>
+      </Section>
+
+      <UpdatesSection />
 
       <Section
         title="Logs"
         description="Deploys, holds, and errors. Attach when reporting a problem."
       >
         <LogsRow />
-      </Section>
-
-      <RemovedProjects />
-
-      <Section title="System">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs">Copy URL when a deployment is ready</p>
-            <p className="text-[11px] text-faint">Ready to paste anywhere.</p>
-          </div>
-          <Switch
-            checked={copyOnReady}
-            aria-label="Copy URL when ready"
-            onCheckedChange={async (v) => {
-              setCopyOnReady(v);
-              await ipc.db.setSetting("copy_url_on_ready", v ? "1" : "0");
-            }}
-          />
-        </div>
-        <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
-          <div>
-            <p className="text-xs">Launch at login</p>
-            <p className="text-[11px] text-faint">Deploys keep running in the background.</p>
-          </div>
-          <Switch
-            checked={autostart}
-            aria-label="Launch at login"
-            onCheckedChange={async (v) => {
-              try {
-                if (v) await enable();
-                else await disable();
-                setAutostart(await isEnabled());
-              } catch {
-                /* unsupported in dev builds on some platforms */
-              }
-            }}
-          />
-        </div>
       </Section>
     </div>
   );
