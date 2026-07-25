@@ -212,7 +212,7 @@ function Metric({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("min-w-0 text-center", className)}>
+    <div className={cn("min-w-0 text-left", className)}>
       {/* Quieter than the value it heads, but not by much: a label is read
           once, to learn what the row is; the value is what you come back to.
           white/65 against the value's white/90 is enough of a step to set the
@@ -223,11 +223,12 @@ function Metric({
           has no lit surface to cast onto) and a bright one is an edge with
           nothing to be an edge of. Both were tried; the scrim carries this. */}
       <p className="text-[10px] uppercase tracking-wider text-white/65">{label}</p>
-      {/* A fixed 18px value line, centred — the height of the Auto switch, the
-          tallest thing any of these cells holds. Left to size themselves, the
-          two text cells came out shorter than the switch cell and the row's
-          bottom edge read as ragged. */}
-      <div className="mt-1 flex h-[18px] items-center justify-center text-[11px] tabular-nums text-white/90">
+      {/* A fixed 18px value line — the height of the Auto switch, the tallest
+          thing any of these holds. Left to size themselves the two text cells
+          came out shorter than the switch cell, so the three values sat on
+          three different baselines. Each cell aligns its label and value on
+          one left edge; the plate as a whole is what sits flush right. */}
+      <div className="mt-0.5 flex h-[18px] items-center text-[11px] tabular-nums text-white/90">
         {children}
       </div>
     </div>
@@ -608,13 +609,13 @@ function ProjectCard({
         aria-hidden
         className="pointer-events-none absolute inset-0"
         style={{
-          // Two scrims, because the card now carries text at both ends.
-          //
-          // The top one is the heavier of the two and it has to be: the
-          // snapshot is `object-top`, so what sits behind the project name is
-          // the site's own header — the part of a page most likely to be flat
-          // white. 0.68 there holds the 19px title at ~5.5:1 and the URL's
-          // white/70 at ~4.4:1 over that worst case.
+          // The top scrim is now almost nothing — 0.30, down from 0.68. It was
+          // heavy to protect the project name; the name moved to the bottom
+          // and the metrics that replaced it carry their own plate, so all
+          // that is left up here is a mark on its own gradient and a solid
+          // white pill, neither of which needs help. What remains is for
+          // depth, not legibility, and the top of the snapshot — the site's
+          // header, the part that makes it recognisable — is visible again.
           //
           // The bottom one is back to 0.72 — stronger than the 0.52 it had
           // when the name moved off it. That weakening is what made the labels
@@ -622,91 +623,74 @@ function ProjectCard({
           // no room left under white text. The labels can be quiet OR the
           // scrim can be thin, not both.
           background: [
-            "linear-gradient(to bottom, rgba(0,0,0,0.68) 0%, rgba(0,0,0,0.40) 24%, rgba(0,0,0,0.08) 44%, transparent 58%)",
+            "linear-gradient(to bottom, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.12) 16%, transparent 32%)",
             "linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.42) 18%, rgba(0,0,0,0.10) 34%, transparent 48%)",
           ].join(","),
         }}
       />
 
       {/*
-        Identity, at the top: mark, then name, then address — the order you'd
-        read a letterhead in, and the order that answers "what is this?" before
-        "where is it?". It sits above the snapshot rather than below it because
-        the snapshot is the *content* of the thing being named; a caption under
-        an image asks you to look at the image first and find out what it was
-        afterwards.
+        The top holds the mark on one side and everything measurable on the
+        other: three columns in a row, flush to the card's right padding edge.
       */}
-      <div className="absolute inset-x-0 top-0 px-3.5 pt-3">
-        <div className="flex items-start justify-between gap-2">
+      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 px-3.5 pt-3">
+        {/* Mark and status share the left, both on the chip's line. The pill
+            used to sit above the metrics, which pushed them down the card and
+            left the two top corners starting at different heights. */}
+        <div className="flex h-7 min-w-0 items-center gap-2">
           <FrameworkChip framework={project.framework as Framework} />
-          {/*
-            Pill and kebab share one slot and cross-fade, in a box with the
-            chip's height. Side by side the hover-hidden kebab reserved its
-            width and pushed the pill off the card's padding; and with the pill
-            deploy-only, an unsized box collapsed and left the kebab with
-            nothing to centre against.
-          */}
-          <div className="relative flex h-7 shrink-0 items-center justify-end">
-            <StatusPill
-              deployment={latest}
-              className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
-            />
-            <MenuButton
-              onOpen={onContextMenu}
-              className="absolute right-0 top-1/2 -translate-y-1/2"
-            />
-          </div>
+          <StatusPill deployment={latest} />
         </div>
 
-        {/* 19px, up from 15. The name is the card's headline now that it is
-            not sharing the bottom edge with three metrics — and the top of the
-            card has the room the bottom never did. */}
-        <h3
-          className="mt-2.5 truncate text-[19px] font-semibold leading-tight tracking-tight text-white"
-          title={project.name}
-        >
-          {project.name}
-        </h3>
         {/*
-          The failure replaces the URL rather than being a banner of its own.
-          As an absolutely-positioned strip it covered the framework chip and
-          the kebab, and a card cannot afford to hide its own controls to show
-          an error.
-        */}
-        {latest?.state === "failed" && latest.error ? (
-          <button
-            className="mt-1 block w-full text-left"
-            onClick={(e) => {
-              e.stopPropagation();
-              setLogsOpen(true);
-            }}
-          >
-            <span className="line-clamp-2 text-[11px] leading-snug text-[oklch(0.85_0.14_23)]">
-              {latest.error}
-            </span>
-            <span className="mt-0.5 block text-[11px] font-medium text-white/80 underline underline-offset-2">
-              View build log
-            </span>
-          </button>
-        ) : url ? (
-          <UrlLine url={url} className="mt-1" tone="onGlass" />
-        ) : (
-          <p className="mt-1 text-xs text-white/60">Not deployed yet</p>
-        )}
+          The metrics carry their own ground.
 
-        {/* The badges moved up here with the name. They are theme-token
-            coloured (`text-muted` and friends), which only works over a
-            surface that follows the theme — and the footer below is now light
-            in both themes, where a dark-theme muted grey is invisible. Up here
-            they sit on the same dark scrim as the title, which is the context
-            those tokens were chosen against. */}
-        {(project.remoteRepo || project.lockedBranch) && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <GitBadge project={project} />
-            <LockBadge project={project} />
-            <HeldBadge project={project} />
-          </div>
-        )}
+          A scrim could not do this job. It is strongest at the edge it starts
+          from and fades inward, so the value that protects the metrics where
+          they sit is far more than the card's own corner needs — covering
+          them meant darkening a third of the image to protect a strip.
+
+          `backdrop-brightness` rather than a flat black fill: it pulls down
+          whatever is actually behind the plate, so a white screenshot gets the
+          darkening it needs and one that is already dark is left alone,
+          keeping its colour through the pane. Worst case — pure white behind —
+          the labels land at ~5:1.
+
+          Hidden until the card is hovered, so at rest the card is its snapshot
+          and its name and nothing else. `group-focus-within` is not optional
+          here: the Auto switch lives inside, and without it a keyboard user
+          tabs to a control that is still at zero opacity. The pointer-events
+          guard is for the same reason from the other side — an invisible
+          toggle that still takes clicks is worse than a hidden one.
+        */}
+        <div className="pointer-events-none flex shrink-0 items-start gap-4 rounded-xl bg-black/35 px-2.5 py-2 opacity-0 ring-1 ring-inset ring-white/10 backdrop-blur-md backdrop-brightness-[0.45] transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+          <Metric label="Deployed">
+            {latest ? (
+              <DeploymentTiming deployment={latest} className="text-white/90" />
+            ) : (
+              <span className="text-white/50">—</span>
+            )}
+          </Metric>
+          <Metric label="Build">
+            {latest ? (
+              <DeploymentDuration deployment={latest} className="text-white/90" />
+            ) : (
+              <span className="text-white/50">—</span>
+            )}
+          </Metric>
+          <Metric label="Auto">
+            <span
+              className="flex items-center"
+              title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
+            >
+              {/* The off state is spelled out because the card's scrim is dark
+                  in both themes while `border-strong` is not: in light theme
+                  it is black at 44%, an off switch that vanishes into the
+                  gradient behind it. */}
+              <AutoSwitch project={project} className="aria-[checked=false]:bg-white/30" />
+            </span>
+          </Metric>
+        </div>
       </div>
 
       {/*
@@ -717,47 +701,58 @@ function ProjectCard({
         for the same reason — the text colour cannot depend on the image.
       */}
       {/*
-        Light ink on the scrim — no plate. A light footer was legible on every
-        screenshot, but it cut the card in two: the glass stopped at its top
-        edge and the site's colour died there with it. The gradient keeps the
-        card one continuous pane, which is the thing worth protecting.
+        Identity along the bottom, with the menu in the corner beside it.
 
-        `justify-between` rather than three equal columns: a 3-col grid sized
-        every slot the same and then left-aligned inside it, so the gaps
-        between "33m ago", "9s" and the switch came out different widths purely
-        because the values are. Spread instead and the two outer metrics sit on
-        the card's padding edges, which lines them up with the name above.
+        `items-end` so the kebab sits on the URL's baseline rather than
+        floating against the tallest thing in the row — it is a control that
+        belongs to the card, and the bottom corner is where it stops competing
+        with the mark and the status pill for the top edge.
       */}
-      <div className="absolute inset-x-0 bottom-0 flex items-start justify-between gap-x-4 px-3.5 pb-3 pt-2.5">
-          <Metric label="Deployed">
-            {latest ? (
-              <DeploymentTiming deployment={latest} className="text-white/90" />
-            ) : (
-              <span className="text-white/50">—</span>
-            )}
-          </Metric>
-        {/* No per-cell padding: it existed to hold text off the column rules,
-            and with those gone it only made the three columns start at three
-            different offsets. The spread does the spacing. */}
-        <Metric label="Build">
-          {latest ? (
-            <DeploymentDuration deployment={latest} className="text-white/90" />
-          ) : (
-            <span className="text-white/50">—</span>
-          )}
-        </Metric>
-        <Metric label="Auto">
-          <span
-            className="flex items-center"
-            title={project.autoDeploy ? "Auto deploy on" : "Auto deploy paused"}
+      <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 px-3.5 pb-3">
+        <div className="min-w-0 flex-1">
+          <h3
+            className="truncate text-[19px] font-semibold leading-tight tracking-tight text-white"
+            title={project.name}
           >
-            {/* The off state is spelled out because the card's scrim is dark
-                in both themes while `border-strong` is not: in light theme it
-                is black at 44%, i.e. an off switch that vanishes into the
-                gradient behind it. */}
-            <AutoSwitch project={project} className="aria-[checked=false]:bg-white/30" />
-          </span>
-        </Metric>
+            {project.name}
+          </h3>
+          {/*
+            The failure replaces the URL rather than being a banner of its own.
+            As an absolutely-positioned strip it covered the framework chip and
+            the kebab, and a card cannot afford to hide its own controls to
+            show an error.
+          */}
+          {latest?.state === "failed" && latest.error ? (
+            <button
+              className="mt-1 block w-full text-left"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLogsOpen(true);
+              }}
+            >
+              <span className="line-clamp-2 text-[11px] leading-snug text-[oklch(0.85_0.14_23)]">
+                {latest.error}
+              </span>
+              <span className="mt-0.5 block text-[11px] font-medium text-white/80 underline underline-offset-2">
+                View build log
+              </span>
+            </button>
+          ) : url ? (
+            <UrlLine url={url} className="mt-1" tone="onGlass" />
+          ) : (
+            <p className="mt-1 text-xs text-white/60">Not deployed yet</p>
+          )}
+
+          {(project.remoteRepo || project.lockedBranch) && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <GitBadge project={project} />
+              <LockBadge project={project} />
+              <HeldBadge project={project} />
+            </div>
+          )}
+        </div>
+
+        <MenuButton onOpen={onContextMenu} className="-mr-0.5 mb-0.5 shrink-0" />
       </div>
 
       {/*
