@@ -10,6 +10,9 @@ commands and events, isolated in a single file on each side.
 │  UI (React + Tailwind + shadcn-style components)                     │
 │  core/atoms.ts         the render layer: one Atom.runtime over AppLive│
 │  core/composition.ts   the Layer graph (AppLive) + business logic     │
+│  core/startup.ts       boot order + per-step error isolation          │
+│  core/project-list.ts  what the dashboard shows, and in what order    │
+│  core/project-actions.ts  what you can do to a project, and whether   │
 │  core/app-state.ts     UI projection state (AppState: SubscriptionRefs)│
 │  core/reconciler.ts    folder = truth: fs changes → project changes  │
 │  core/watch-stream.ts  fs:changed → Stream<FsChange[]>, whole batches │
@@ -33,7 +36,10 @@ commands and events, isolated in a single file on each side.
 │  db.rs                 SQLite (projects, deployments, logs, settings)│
 │  credentials.rs        OS keychain + CLI session detection           │
 │  tray.rs / tray_drop.rs  menu-bar app, status icons, drag target    │
-│  projects.rs / git.rs  folder scanning, imports, .git reading        │
+│  projects.rs           root folder, scanning, path sandboxing        │
+│  projects/naming.rs    what a dropped thing gets called              │
+│  projects/import.rs    drops, adoption, the example site             │
+│  git.rs                .git reading (no git binary)                  │
 └────────────────────────────────  Rust  ──────────────────────────────┘
 ```
 
@@ -78,6 +84,12 @@ one `AppLive: Layer.Layer<...>` in `core/composition.ts` and driven by one
   persists state and refreshes the tray") as plain functions closing over
   the built shapes. `start()` forks the startup sequence once from
   `App.tsx`'s mount effect.
+- **`core/startup.ts`** owns the boot *order* and the rule that one failing
+  step must not cost the watcher; `composition.ts` supplies the concrete
+  effect behind each named step. The split exists because importing
+  `composition.ts` builds a `ManagedRuntime`, a live Tauri-bound deployer and
+  a process-wide session, so those ordering constraints could only ever be
+  documented in prose. They are assertions now (`core/startup.test.ts`).
 - **`core/atoms.ts`** is the render layer, built on `@effect/atom-react`
   (the package tracks `effect`'s own beta version exactly — not
   `@effect-atom/atom-react`, an unrelated v3-only community package). One
@@ -285,8 +297,15 @@ SQLite (WAL) in the platform app-data dir, owned by Rust:
 - `settings` — key/value (root folder, etc.). Tokens are **not** here; they
   live in the OS keychain.
 
-`AppState`'s `SubscriptionRef`s are a projection of SQLite for rendering;
-`core/composition.ts`'s wiring functions are their only writers.
+`AppState`'s `SubscriptionRef`s are a projection of SQLite for rendering. They
+are written from inside the Layer graph — `composition.ts`'s wiring functions,
+plus the services that own a particular fact (`queue.ts` and `ready-effects.ts`
+call `upsertDeployment`; `git.ts` is the *only* writer of `gitByProject`) — and
+from `atoms.ts`'s `set*Local` writes for the four fields the UI itself owns
+(`route`, `theme`, `watchPaused`, `rootFolder`). What is deliberately *not* a
+writer is a React component: `projects` is refreshed only through
+`composition.ts`'s `reloadProjects`, so a dialog that just wrote a project row
+asks for a refresh rather than re-reading SQLite and pushing the result in.
 
 ## Drag-and-drop import
 
@@ -404,7 +423,8 @@ locally; the remote is never touched without a typed confirmation.*
 2. **Move to Trash** (project context menu) — OS trash via the `trash`
    crate (recoverable, never rm -rf), then flows through path 1.
 3. **Clear history** — Settings lists removed projects ("ghosts"); clearing
-   deletes the row (deployments/logs/domains cascade) plus the snapshot.
+   deletes the row (deployments/logs/domains cascade) plus the snapshot, in
+   one command (`forget_project`) rather than two awaits from the frontend.
    Until cleared, restoring a same-named folder reattaches its history.
 4. **Delete on Vercel** — the only destructive remote action: a
    type-the-project-name dialog gating `vercel project rm --yes`.
@@ -547,9 +567,15 @@ layer reads directly.
 persisted (`auth_user_id`); when `refreshAuth` sees a different uid, a
 banner surfaces the choice the app cannot make itself: *Keep Links* (both
 accounts on the same team — team-owned project ids remain valid) or *Start
-Fresh* (clear each project's vercel id, team, git-integration state and
-`.vercel` link file, so next deploys create new projects under the new
-account; local history and old remote projects are untouched). While the switch is unresolved, auto-deploys are held (changes accumulate
+Fresh* (clear every project's vercel id, team, git-integration state and
+ownership, so next deploys create new projects under the new account; local
+history and old remote projects are untouched). Start Fresh is a **single**
+statement over the whole `projects` table (`start_fresh_under`), not four
+writes per project plus an ownership pass — a folder half-migrated between
+two accounts is worse than either end state, so it moves all at once or not
+at all. The `.vercel` link files are removed separately and best-effort:
+they are on disk, outside anything SQLite can make atomic, and a stale one
+is re-derived on the next deploy. While the switch is unresolved, auto-deploys are held (changes accumulate
 per project and deploy once after the user chooses); manual deploys remain
 available as explicit intent.
 

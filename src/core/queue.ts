@@ -105,6 +105,17 @@ export interface QueueDeps {
    * independently testable; defaults to "nothing pending".
    */
   accountSwitchPending?: Effect.Effect<boolean>;
+  /**
+   * What to do with a project whose `offline` hold just cleared.
+   *
+   * Defaults to this queue's own `notifyChange`, which is what makes the
+   * offline behaviour testable here with nothing else running. In the real
+   * app it is wired to `AutoDeployGate`, because a project that has been
+   * waiting out an outage has to re-pass the **Gate** — the user may have
+   * started a rebase, switched branches, or signed out while it waited, and
+   * going straight to `notifyChange` skipped all of that.
+   */
+  drainHeld?: (projectId: string) => Effect.Effect<void>;
   debounceMs?: number;
   pipeline?: PipelineOptions;
 }
@@ -626,7 +637,8 @@ export const make = (deps: QueueDeps) =>
         // deploy when their other holds (account switch, git operation)
         // clear.
         const freed = yield* held.release("offline");
-        for (const projectId of freed) yield* notifyChange(projectId);
+        const drain = deps.drainHeld ?? notifyChange;
+        for (const projectId of freed) yield* drain(projectId);
       }
     });
 

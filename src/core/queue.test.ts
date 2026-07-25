@@ -106,7 +106,9 @@ const pump = Effect.gen(function* () {
 
 const makeHarness = (
   script: Script,
-  deps: Partial<Pick<QueueDeps, "debounceMs" | "pipeline" | "accountSwitchPending">> = {},
+  deps: Partial<
+    Pick<QueueDeps, "debounceMs" | "pipeline" | "accountSwitchPending" | "drainHeld">
+  > = {},
   options: {
     autoDeploy?: boolean;
     projectIds?: string[];
@@ -260,6 +262,34 @@ describe("DeployQueue", () => {
       }).pipe(Effect.provide(h.layer));
     });
 
+    /** The seam the real app uses to send a drained change back through the
+     * Gate instead of straight into a deploy. */
+    it.effect("hands freed projects to drainHeld when one is supplied", () => {
+      const drained: string[] = [];
+      const h = makeHarness(async () => ok(), {
+        debounceMs: 100,
+        drainHeld: (projectId) =>
+          Effect.sync(() => {
+            drained.push(projectId);
+          }),
+      });
+      return Effect.gen(function* () {
+        const queue = yield* DeployQueue;
+        yield* queue.setOffline(true);
+        yield* queue.notifyChange("p1");
+        yield* queue.notifyChange("p2");
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+
+        yield* queue.setOffline(false);
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(drained.sort()).toEqual(["p1", "p2"]);
+        // Routed away from the queue entirely — no deploy without the gate.
+        expect(h.calls.length).toBe(0);
+      }).pipe(Effect.provide(h.layer));
+    });
+
     it.effect("holds a change whose debounce window straddles going offline", () => {
       const h = makeHarness(async () => ok(), { debounceMs: 100 });
       return Effect.gen(function* () {
@@ -278,11 +308,13 @@ describe("DeployQueue", () => {
     });
 
     /**
-     * The reconnect drain calls `notifyChange` directly, bypassing
-     * `AutoDeployGate` — so the account-switch hold has to be enforced by the
-     * queue itself. Without it: pile up edits offline, switch Vercel accounts,
-     * come back online, and every held project deploys under an account the
-     * user never confirmed.
+     * In production the reconnect drain is routed back through
+     * `AutoDeployGate` (`QueueDeps.drainHeld`), but the queue must not *rely*
+     * on that: the default path is its own `notifyChange`, and this is the
+     * hold that matters most if a future caller wires the drain somewhere
+     * else. Without the check here: pile up edits offline, switch Vercel
+     * accounts, come back online, and every held project deploys under an
+     * account the user never confirmed.
      */
     it.effect("does not drain into a deploy while an account switch is unresolved", () => {
       let switchPending = false;

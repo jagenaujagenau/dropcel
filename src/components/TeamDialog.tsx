@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
-import { setProjectsLocal } from "../core/atoms";
+import { reloadProjects } from "../core/atoms";
 import { getAuthToken } from "../core/auth";
 import type { Project } from "../core/types";
 import * as api from "../core/vercel-api";
@@ -45,7 +45,7 @@ export function TeamDialog({ project, onDone }: { project: Project; onDone: () =
     setBusy(true);
     try {
       await ipc.db.setProjectTeam(project.id, teamId);
-      setProjectsLocal(await ipc.db.listProjects());
+      await reloadProjects();
       onDone();
     } finally {
       setBusy(false);

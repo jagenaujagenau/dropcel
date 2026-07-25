@@ -1,21 +1,12 @@
 import { cn, formatDuration, formatElapsed, timeAgo } from "../lib/utils";
 import { useNow } from "../lib/useNow";
+// The vocabulary lives in `core/project-list.ts`, not here: this module used
+// to keep its own label table, which said "Ready" where the card's pill said
+// "Live" for the same deployment.
+import { isDeploying, statusLabel } from "../core/project-list";
 import type { Deployment } from "../core/types";
 
-const LABELS: Record<string, string> = {
-  detected: "Detected",
-  queued: "Queued",
-  preparing: "Preparing",
-  uploading: "Uploading",
-  building: "Building",
-  ready: "Ready",
-  failed: "Failed",
-  canceled: "Canceled",
-};
-
-export function isDeploying(state: string | undefined): boolean {
-  return ["queued", "preparing", "uploading", "building"].includes(state ?? "");
-}
+export { isDeploying };
 
 export function StatusDot({ state }: { state: string | undefined }) {
   return (
@@ -43,7 +34,7 @@ export function StatusLabel({
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-xs text-muted", className)}>
       <StatusDot state={state} />
-      {state ? LABELS[state] ?? state : "No deployments"}
+      {statusLabel(state)}
     </span>
   );
 }

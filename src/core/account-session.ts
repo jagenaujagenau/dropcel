@@ -96,9 +96,16 @@ export interface AccountSessionDeps {
   clearAccountSwitch: () => void;
   // -- "Start Fresh" link clearing --
   getProjects: () => { id: string; name: string }[];
-  clearProjectLink: (projectId: string) => Effect.Effect<void, unknown>;
-  clearProjectTeam: (projectId: string) => Effect.Effect<void, unknown>;
-  clearRemoteRepo: (projectId: string) => Effect.Effect<void, unknown>;
+  /**
+   * Unlink every project from the old account and hand them all to `ownerUid`
+   * (`null` when the new identity is unknown), atomically.
+   *
+   * One dep, not the four per-project ones it replaces. Those were four IPC
+   * writes per project plus a separate ownership pass, every failure
+   * individually ignored — so a folder could end up half-migrated with no way
+   * to tell. See db.rs's `start_fresh_under`.
+   */
+  startFresh: (ownerUid: string | null) => Effect.Effect<void, unknown>;
   removeLinkFile: (projectName: string) => Effect.Effect<void, unknown>;
   /** Fresh start chosen — reset per-session integration bookkeeping. */
   onFreshStart: () => void;
@@ -111,9 +118,6 @@ export interface AccountSessionDeps {
   ) => Effect.Effect<void, unknown>;
   /** Give every project with no owner to `uid`. */
   claimUnownedProjects: (uid: string) => Effect.Effect<void, unknown>;
-  /** Reassign every project to `uid` — "start fresh" re-creates them all
-   * under the new account, so they change hands. */
-  setProjectOwner: (projectId: string, uid: string) => Effect.Effect<void, unknown>;
   /** Reload projects from the db into the store after resolution. */
   reloadProjects: Effect.Effect<void, unknown>;
   /** The switch is resolved — deploy the changes that piled up. */
@@ -378,36 +382,36 @@ export const make = (deps: AccountSessionDeps) =>
       mode: SwitchResolution,
     ) {
       if (!deps.getAccountSwitch()) return;
+      // Identity first, so "unlink everything" and "hand it all to the new
+      // owner" can be the same write. The old order did the unlinking before
+      // it knew who the new account was, which is what forced ownership into
+      // a second pass — and left the two halves able to disagree.
+      const token = yield* getToken;
+      const user = token
+        ? yield* deps.fetchUser(token).pipe(Effect.catch(() => Effect.succeed(null)))
+        : null;
+
       if (mode === "fresh") {
+        // Every project is about to re-create under the new account, so every
+        // project changes hands. "keep" is the opposite: the links still point
+        // at the old account's projects, and the ownership recorded against
+        // them is still true.
+        yield* deps.startFresh(user?.uid ?? null).pipe(Effect.ignore);
+        // Not part of that write — these are files on disk. Each one is
+        // independently best-effort: a stale `.vercel/project.json` is
+        // re-derived on the next deploy, so a failure here is recoverable in a
+        // way a half-migrated database would not be.
         for (const p of deps.getProjects()) {
-          yield* deps.clearProjectLink(p.id).pipe(Effect.ignore);
-          yield* deps.clearProjectTeam(p.id).pipe(Effect.ignore);
-          yield* deps.clearRemoteRepo(p.id).pipe(Effect.ignore);
           yield* deps.removeLinkFile(p.name).pipe(Effect.ignore);
         }
         deps.onFreshStart();
       }
-      const token = yield* getToken;
-      if (token) {
-        const user = yield* deps
-          .fetchUser(token)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (user) {
-          yield* deps.setSetting(UID_SETTING, user.uid).pipe(Effect.ignore);
-          yield* deps.setSetting(USERNAME_SETTING, user.username).pipe(Effect.ignore);
-          yield* deps
-            .rememberAccount(user.uid, user.username, user.avatarUrl ?? null)
-            .pipe(Effect.ignore);
-          if (mode === "fresh") {
-            // Every project is about to re-create under the new account, so
-            // every project changes hands. "keep" is the opposite: the links
-            // still point at the old account's projects, and the ownership
-            // recorded against them is still true.
-            for (const p of deps.getProjects()) {
-              yield* deps.setProjectOwner(p.id, user.uid).pipe(Effect.ignore);
-            }
-          }
-        }
+      if (user) {
+        yield* deps.setSetting(UID_SETTING, user.uid).pipe(Effect.ignore);
+        yield* deps.setSetting(USERNAME_SETTING, user.username).pipe(Effect.ignore);
+        yield* deps
+          .rememberAccount(user.uid, user.username, user.avatarUrl ?? null)
+          .pipe(Effect.ignore);
       }
       deps.clearAccountSwitch();
       yield* SubscriptionRef.update(state, (s) => ({ ...s, pendingSwitch: null }));
@@ -451,14 +455,11 @@ export const realDeps = (ipc: IpcShape, hooks: AccountSessionHooks): AccountSess
     Effect.tryPromise({ try: () => api.run(api.getUser({ token })), catch: (e) => e }),
   getSetting: (key) => ipc.db.getSetting(key),
   setSetting: (key, value) => ipc.db.setSetting(key, value),
-  clearProjectLink: (id) => ipc.db.setProjectLink(id, null),
-  clearProjectTeam: (id) => ipc.db.setProjectTeam(id, null),
-  clearRemoteRepo: (id) => ipc.db.setRemoteRepo(id, ""),
+  startFresh: (ownerUid) => ipc.db.startFreshUnder(ownerUid),
   removeLinkFile: (name) => ipc.files.removeProjectLink(name),
   rememberAccount: (uid, username, avatarUrl) =>
     ipc.db.upsertAccount(uid, username, avatarUrl),
   claimUnownedProjects: (uid) => ipc.db.claimUnownedProjects(uid),
-  setProjectOwner: (id, uid) => ipc.db.setProjectOwner(id, uid),
   setAuthedAs: hooks.setAuthedAs,
   notify: hooks.notify,
   onSwitchDetected: hooks.onSwitchDetected,

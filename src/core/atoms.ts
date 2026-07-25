@@ -14,13 +14,14 @@ import {
   reconcile,
   refreshAccounts,
   refreshAuth,
+  reloadProjects,
   resolveAccountSwitch,
 } from "./composition";
 import { Connectivity } from "./effects";
+import { rankByRecency } from "./project-list";
 import { Updater } from "./updater";
 import { applyTheme, cacheTheme, type Theme } from "../lib/theme";
 import type { Route } from "./app-state";
-import type { Project } from "./types";
 
 /**
  * The render layer's one `Atom.runtime`, sharing `managedRuntime`'s
@@ -148,11 +149,7 @@ export const latestByProjectAtom = latestByProjectRaw;
  * Projects with no deployment are absent; the caller ranks them last.
  */
 export const projectOrderAtom = Atom.map(latestByProjectRaw, (m) =>
-  Object.entries(m)
-    .filter(([, d]) => d !== undefined)
-    .sort(([, a], [, b]) => Date.parse(b!.startedAt) - Date.parse(a!.startedAt))
-    .map(([id]) => id)
-    .join(","),
+  [...rankByRecency(m).keys()].join(","),
 );
 /** One project's latest deployment. Read with `useAtomValue` — this is a
  * plain synchronous value, not `AsyncResult`-wrapped (see block comment
@@ -229,9 +226,12 @@ export function setThemeLocal(theme: Theme): void {
   Effect.runSync(SubscriptionRef.set(appStateShape.theme, theme));
 }
 
-export function setProjectsLocal(projects: Project[]): void {
-  Effect.runSync(appStateShape.setProjects(projects));
-}
+// There is deliberately no `setProjectsLocal` here. A component that has just
+// written a project row wants "refresh the list", not "here is the list" —
+// handing it the setter meant every caller also had to know to re-read SQLite
+// first, and three of them did it inline. `reloadProjects` below owns both
+// halves, so the projection has one writer reachable from the UI instead of a
+// setter anyone can aim anywhere.
 
 export {
   checkForUpdates,
@@ -241,5 +241,6 @@ export {
   reconcile,
   refreshAccounts,
   refreshAuth,
+  reloadProjects,
   resolveAccountSwitch,
 };

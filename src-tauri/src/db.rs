@@ -540,15 +540,6 @@ impl Db {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    pub fn set_project_owner(&self, id: &str, owner_uid: &str) -> AppResult<()> {
-        let conn = self.conn();
-        conn.execute(
-            "UPDATE projects SET owner_uid = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, owner_uid, now()],
-        )?;
-        Ok(())
-    }
-
     /// Give every unowned project to `owner_uid`.
     ///
     /// Existing installs have a whole folder of projects and no record of who
@@ -561,6 +552,33 @@ impl Db {
         Ok(conn.execute(
             "UPDATE projects SET owner_uid = ?1 WHERE owner_uid IS NULL",
             params![owner_uid],
+        )?)
+    }
+
+    /// "Start Fresh" after an account switch: unlink every project from the
+    /// previous account and hand them all to `owner_uid` at once.
+    ///
+    /// One statement — and therefore one implicit transaction — because the
+    /// frontend used to do this as four IPC writes per project plus a fifth
+    /// pass to set the owner: `5N + 3` round trips, each one's failure
+    /// individually swallowed. A crash or a single failed write partway
+    /// through left some projects unlinked-and-reowned and others still
+    /// linked to the old account, which is precisely the half-state the
+    /// feature exists to prevent. Now every project moves or none does.
+    ///
+    /// `owner_uid` is `None` when the new account's identity could not be
+    /// fetched (offline, no token). That clears ownership rather than leaving
+    /// the old account's uid on a project it no longer has any link to —
+    /// `claim_unowned_projects` picks them up on the next successful sign-in.
+    ///
+    /// The `.vercel/project.json` link files are removed separately: they are
+    /// on disk, outside anything SQLite can make atomic.
+    pub fn start_fresh_under(&self, owner_uid: Option<&str>) -> AppResult<usize> {
+        let conn = self.conn();
+        Ok(conn.execute(
+            "UPDATE projects SET vercel_project_id = NULL, team_id = NULL,
+                    remote_repo = NULL, owner_uid = ?1, updated_at = ?2",
+            params![owner_uid, now()],
         )?)
     }
 
@@ -807,5 +825,50 @@ mod tests {
         let found = db.find_project_by_name("new").unwrap().unwrap();
         assert_eq!(found.id, p.id);
         assert_eq!(found.vercel_project_id.as_deref(), Some("prj_123"));
+    }
+
+    /// "Start Fresh" has to be all-or-nothing across every project: a folder
+    /// where half the projects still point at the previous account is worse
+    /// than either outcome on its own.
+    #[test]
+    fn start_fresh_unlinks_and_reowns_every_project_at_once() {
+        let db = open_in_memory().unwrap();
+        let a = db.upsert_project("blog", "/tmp/Vercel/blog", "astro").unwrap();
+        let b = db.upsert_project("shop", "/tmp/Vercel/shop", "nextjs").unwrap();
+        for p in [&a, &b] {
+            db.set_project_link(&p.id, Some("prj_old")).unwrap();
+            db.set_project_team(&p.id, Some("team_old")).unwrap();
+            db.set_remote_repo(&p.id, "acme/site").unwrap();
+        }
+        db.claim_unowned_projects("uid_old").unwrap();
+
+        assert_eq!(db.start_fresh_under(Some("uid_new")).unwrap(), 2);
+
+        for p in db.list_projects().unwrap() {
+            assert_eq!(p.vercel_project_id, None);
+            assert_eq!(p.team_id, None);
+            assert_eq!(p.remote_repo, None);
+            assert_eq!(p.owner_uid.as_deref(), Some("uid_new"));
+        }
+    }
+
+    /// No identity for the new account (offline, or the token fetch failed):
+    /// ownership is cleared rather than left pointing at an account the
+    /// projects are no longer linked to, so the next sign-in claims them.
+    #[test]
+    fn start_fresh_without_an_identity_leaves_projects_unowned() {
+        let db = open_in_memory().unwrap();
+        db.upsert_project("blog", "/tmp/Vercel/blog", "astro").unwrap();
+        db.claim_unowned_projects("uid_old").unwrap();
+
+        db.start_fresh_under(None).unwrap();
+
+        assert_eq!(db.list_projects().unwrap()[0].owner_uid, None);
+        // …and the backfill picks them up on the next successful sign-in.
+        assert_eq!(db.claim_unowned_projects("uid_new").unwrap(), 1);
+        assert_eq!(
+            db.list_projects().unwrap()[0].owner_uid.as_deref(),
+            Some("uid_new")
+        );
     }
 }

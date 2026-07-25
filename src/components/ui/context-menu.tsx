@@ -7,6 +7,9 @@ export interface ContextMenuItem {
   icon?: React.ReactNode;
   onSelect?: () => void;
   disabled?: boolean;
+  /** Hover explanation — a greyed row that doesn't say why is just a dead
+   * end. `core/project-actions.ts` carries the reason with the verdict. */
+  title?: string;
   separatorBefore?: boolean;
 }
 
@@ -114,6 +117,7 @@ export function ContextMenu({
             <button
               role="menuitem"
               disabled={item.disabled}
+              title={item.title}
               // Pointer and keyboard drive one highlight, so moving the mouse
               // never leaves two rows looking active.
               onMouseMove={() => !item.disabled && setActive(i)}

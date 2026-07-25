@@ -43,11 +43,36 @@ db_command!(db_set_project_link(id: String, vercel_project_id: Option<String>) -
 db_command!(db_set_auto_deploy(id: String, enabled: bool) -> () => set_auto_deploy(&id, enabled));
 db_command!(db_set_project_framework(id: String, framework: String) -> ()
     => set_project_framework(&id, &framework));
-db_command!(db_delete_project(id: String) -> () => delete_project(&id));
-db_command!(db_set_project_owner(id: String, owner_uid: String) -> ()
-    => set_project_owner(&id, &owner_uid));
 db_command!(db_claim_unowned_projects(owner_uid: String) -> usize
     => claim_unowned_projects(&owner_uid));
+db_command!(db_start_fresh_under(owner_uid: Option<String>) -> usize
+    => start_fresh_under(owner_uid.as_deref()));
+
+/// Forget a project locally: its row (deployments, logs and domains cascade)
+/// and its snapshot file.
+///
+/// Not a `db_command!` line because it is deliberately *not* one DB call. The
+/// frontend used to sequence the two halves itself — snapshot first with its
+/// error swallowed, then the row — so a failure between them orphaned a PNG
+/// under a project id nothing referenced any more. Doing both here makes the
+/// order fixed and the outcome one result.
+///
+/// The row goes first: it is the authoritative record, and a leftover image
+/// with no row is invisible (the next capture for a reused id overwrites it),
+/// whereas a row whose snapshot is already gone renders a broken card.
+#[tauri::command(async)]
+pub fn forget_project(app: AppHandle, db: State<'_, Db>, project_id: String) -> AppResult<()> {
+    db.delete_project(&project_id)?;
+    if let Err(err) = crate::screenshot::delete_snapshot_file(&app, &project_id) {
+        crate::logger::log(
+            &app,
+            "WARN",
+            "db",
+            &format!("could not delete snapshot for {project_id}: {err}"),
+        );
+    }
+    Ok(())
+}
 
 // ---- accounts -------------------------------------------------------------
 

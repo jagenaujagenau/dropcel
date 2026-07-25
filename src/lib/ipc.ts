@@ -31,11 +31,16 @@ export const db = {
     invoke<void>("db_set_auto_deploy", { id, enabled }),
   setProjectFramework: (id: string, framework: string) =>
     invoke<void>("db_set_project_framework", { id, framework }),
-  deleteProject: (id: string) => invoke<void>("db_delete_project", { id }),
-  setProjectOwner: (id: string, ownerUid: string) =>
-    invoke<void>("db_set_project_owner", { id, ownerUid }),
+  /** Row (deployments/logs/domains cascade) *and* snapshot file, one call —
+   * see commands.rs's `forget_project` for why the two halves are not
+   * sequenced from here. */
+  forgetProject: (projectId: string) => invoke<void>("forget_project", { projectId }),
   claimUnownedProjects: (ownerUid: string) =>
     invoke<number>("db_claim_unowned_projects", { ownerUid }),
+  /** "Start Fresh": unlink every project from the old account and hand them
+   * all to `ownerUid` in one statement. `null` leaves them unowned. */
+  startFreshUnder: (ownerUid: string | null) =>
+    invoke<number>("db_start_fresh_under", { ownerUid }),
   upsertAccount: (uid: string, username: string, avatarUrl: string | null) =>
     invoke<void>("db_upsert_account", { uid, username, avatarUrl }),
   listAccounts: () => invoke<Account[]>("db_list_accounts"),
@@ -177,7 +182,6 @@ export const snapshots = {
   /** One IPC round trip for N projects — see composition.ts's startup hydration. */
   getBatch: (projectIds: string[]) =>
     invoke<Record<string, Snapshot>>("get_snapshots_batch", { projectIds }),
-  delete: (projectId: string) => invoke<void>("delete_snapshot", { projectId }),
 };
 
 // ---- credentials ----------------------------------------------------------

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { gitStatusAtom, setProjectsLocal } from "../core/atoms";
+import { gitStatusAtom, reloadProjects } from "../core/atoms";
 import type { Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { Button } from "./ui/button";
@@ -29,7 +29,7 @@ export function LockBranchDialog({
     setBusy(true);
     try {
       await ipc.db.setLockedBranch(project.id, value);
-      setProjectsLocal(await ipc.db.listProjects());
+      await reloadProjects();
       onDone();
     } finally {
       setBusy(false);

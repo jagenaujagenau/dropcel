@@ -248,10 +248,13 @@ pub fn get_snapshots_batch(
     Ok(out)
 }
 
-/// Drop a project's snapshot (called when the project is forgotten).
-#[tauri::command(async)]
-pub fn delete_snapshot(app: AppHandle, project_id: String) -> AppResult<()> {
-    let path = snapshot_path(&app, &project_id)?;
+/// Drop a project's snapshot.
+///
+/// Not a command: forgetting a project is one operation, and the frontend
+/// calling this half separately is what used to leave orphaned PNGs behind.
+/// `commands::forget_project` is the only caller.
+pub fn delete_snapshot_file(app: &AppHandle, project_id: &str) -> AppResult<()> {
+    let path = snapshot_path(app, project_id)?;
     if path.is_file() {
         std::fs::remove_file(&path)?;
     }

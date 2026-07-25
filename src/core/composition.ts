@@ -6,7 +6,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ipc from "../lib/ipc";
 import { describeError, log } from "../lib/log";
-import { applyTheme, cacheTheme, type Theme } from "../lib/theme";
+import { applyTheme, cacheTheme } from "../lib/theme";
 import {
   make as accountSessionMake,
   realDeps as accountSessionRealDeps,
@@ -31,11 +31,12 @@ import {
   type TrayShape,
 } from "./effects";
 import { refreshGitInfo, type GitStatus } from "./git";
-import { make as heldChangesMake, HeldChangesService } from "./held-changes";
+import { make as heldChangesMake, HeldChangesService, type HoldReason } from "./held-changes";
 import { make as ipcMake, Ipc } from "./ipc";
 import { DeployQueue, layer as deployQueueLayer, type QueueDeps } from "./queue";
 import { layer as readyEffectsLayer, ReadyEffects, type RecordVercelIdsInfo } from "./ready-effects";
 import { make as reconcilerMake, ReconcilerService, type ReconcilerHooks } from "./reconciler";
+import { runStartup, type StartupHooks } from "./startup";
 import type { Account, DeployTarget } from "./types";
 import { layer as updaterLayer, Updater } from "./updater";
 import { layer as watchStreamLayer, WatchStream } from "./watch-stream";
@@ -97,21 +98,18 @@ const accountSessionHooks: AccountSessionHooks = {
   onFreshStart: () => {
     managedRuntime.runFork(Effect.andThen(ReadyEffects, (r) => r.resetIntegrationChecks()));
   },
-  reloadProjects: async () => {
-    const projects = await ipc.db.listProjects();
-    Effect.runSync(appStateShape.setProjects(projects));
-  },
+  reloadProjects,
   onSwitchResolved: () => {
-    managedRuntime.runFork(
-      Effect.gen(function* () {
-        const held = yield* HeldChangesService;
-        const gate = yield* AutoDeployGate;
-        const freed = yield* held.release("account-switch");
-        for (const id of freed) yield* gate.notifyChangeGitGated(id);
-      }),
-    );
+    releaseHold("account-switch");
   },
 };
+
+/** Fire-and-forget `AutoDeployGate.releaseHold` — the one way a cleared cause
+ * turns back into deploys. Every caller here is an event handler with nothing
+ * to await. */
+function releaseHold(reason: HoldReason): void {
+  managedRuntime.runFork(Effect.andThen(AutoDeployGate, (g) => g.releaseHold(reason)));
+}
 
 const accountSessionShape = Effect.runSync(
   accountSessionMake(accountSessionRealDeps(ipcShape, accountSessionHooks)),
@@ -215,6 +213,14 @@ const queueDeps: QueueDeps = {
     Effect.map((s) => s.pendingSwitch !== null),
   ),
   debounceMs: 2_000,
+  // Reconnecting re-enters the gate rather than the queue's own
+  // `notifyChange`: a change can sit out an outage for hours, and the repo it
+  // belongs to may have started a rebase in the meantime. Same reason the
+  // account-switch check above is not left to callers.
+  drainHeld: (projectId) =>
+    Effect.sync(() => {
+      notifyChangeGitGated(projectId);
+    }),
   // `ReadyEffects` lives behind `Context` (it needs `Notifier`/`Connectivity`,
   // which only resolve through `managedRuntime`'s async construction), so
   // this stays an injected Effect-returning closure rather than a Context
@@ -371,14 +377,32 @@ export function deployProject(projectId: string, target: DeployTarget): void {
 }
 
 /**
+ * Re-read the project rows from SQLite and publish them to the projection.
+ *
+ * The one door for "SQLite changed, refresh the list". It exists because the
+ * two-liner it replaces was open-coded at every call site — including three
+ * React components, which meant a dialog reached past the composition root and
+ * wrote the projection directly. SQLite is still the source of truth; this is
+ * the only place outside the graph's own wiring that re-reads it for `projects`.
+ *
+ * `setProjects` (not a bare `SubscriptionRef.set`) so the field-wise comparison
+ * still suppresses the no-op writes this is called with most of the time.
+ */
+export async function reloadProjects(): Promise<void> {
+  Effect.runSync(appStateShape.setProjects(await ipc.db.listProjects()));
+}
+
+/**
  * Forget a project locally: history, logs, domains (SQL cascade), its
  * snapshot and any queue state. The remote Vercel project is untouched.
  */
 export async function purgeProject(projectId: string): Promise<void> {
   managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.remove(projectId)));
-  await ipc.snapshots.delete(projectId).catch(() => {});
-  await ipc.db.deleteProject(projectId);
-  Effect.runSync(appStateShape.setProjects(await ipc.db.listProjects()));
+  // Row and snapshot together — the two used to be separate awaits with the
+  // snapshot's failure swallowed, so a crash between them left a PNG behind
+  // under an id nothing referenced.
+  await ipc.db.forgetProject(projectId);
+  await reloadProjects();
   await refreshTray();
 }
 
@@ -413,14 +437,7 @@ async function releaseSignedOutHolds(): Promise<void> {
     SubscriptionRef.get(accountSessionShape.state),
   ).username;
   if (!signedIn) return;
-  managedRuntime.runFork(
-    Effect.gen(function* () {
-      const held = yield* HeldChangesService;
-      const gate = yield* AutoDeployGate;
-      const freed = yield* held.release("signed-out");
-      for (const id of freed) yield* gate.notifyChangeGitGated(id);
-    }),
-  );
+  releaseHold("signed-out");
 }
 
 /** User chose how to handle an account switch (Keep Links / Start Fresh). */
@@ -441,102 +458,95 @@ export function installUpdateAndRelaunch(): Promise<void> {
 
 /**
  * Changes held during a previous offline session: deploy them now (or
- * re-hold if still offline — the queue re-persists in that case).
+ * re-hold if still offline).
+ *
+ * The persisted `dirty_projects` set *is* the `offline` component of **Held
+ * changes** — so this rehydrates it into the ledger and then releases it,
+ * rather than reaching past the ledger into the queue. That matters for more
+ * than tidiness: the old shortcut enqueued each id directly, which meant a
+ * restart drained changes without re-checking the **Gate**, and did it while
+ * `refreshAuth()` was still in flight. Going through `releaseHold` puts the
+ * restart path on exactly the same footing as reconnecting mid-session.
+ *
+ * Marking then releasing is not a no-op round trip: `release` returns only the
+ * projects with no *other* reason left, and `notifyChangeGitGated` re-holds
+ * anything that still shouldn't go. Persistence takes care of itself — `mark`
+ * rewrites the setting from the live set and `release` empties it.
  */
 async function drainPersistedDirty(): Promise<void> {
   try {
     const raw = await ipc.db.getSetting("dirty_projects");
     const ids: unknown = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(ids) || ids.length === 0) return;
-    await ipc.db.setSetting("dirty_projects", "[]");
     const projects = Effect.runSync(SubscriptionRef.get(appStateShape.projects));
-    for (const id of ids) {
-      if (typeof id === "string" && projects.some((p) => p.id === id)) {
-        managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.notifyChange(id)));
-      }
-    }
+    const live = ids.filter(
+      (id): id is string => typeof id === "string" && projects.some((p) => p.id === id),
+    );
+    await managedRuntime.runPromise(
+      Effect.gen(function* () {
+        const held = yield* HeldChangesService;
+        const gate = yield* AutoDeployGate;
+        for (const id of live) yield* held.mark(id, "offline");
+        yield* gate.releaseHold("offline");
+      }),
+    );
+    // Ids that no longer name a live project would otherwise sit in the
+    // setting forever; `mark`/`release` only ever rewrite it from the ids
+    // that made it into the ledger.
+    if (live.length !== ids.length) await ipc.db.setSetting("dirty_projects", "[]");
   } catch (err) {
     log.warn("composition", `could not drain held changes: ${describeError(err)}`);
   }
 }
 
 /**
- * Runs one startup step, converting failure into a logged warning.
+ * The startup sequence's side effects.
  *
- * Startup is a sequence of largely independent steps, and it used to be one
- * unbroken `await` chain — so a single rejection meant every step *after* it
- * silently never ran. `reconcile(true)` alone can fail for mundane reasons (an
- * unmounted external drive making `scan_projects` fail, a macOS TCC denial on
- * the folder, a locked database), and when it did, the watcher never started,
- * connectivity was never established, and held changes never drained. Since
- * `started` is already latched by then, nothing retried short of relaunching
- * the app — it just sat there showing an empty dashboard and never watching
- * the folder again.
- *
- * Losing one step is survivable. Losing the watcher is losing the app.
+ * The *order* and the error isolation live in `core/startup.ts`, where they
+ * can be tested; what is left here is the binding of each named step to the
+ * concrete thing it does. Forked once by `App.tsx`.
  */
-async function step(name: string, run: () => Promise<void>): Promise<void> {
-  try {
-    await run();
-  } catch (err) {
-    log.error("composition", `startup step "${name}" failed: ${describeError(err)}`);
-  }
-}
-
-/**
- * Startup sequencing — forked once by `App.tsx`: settings, auth check, initial
- * reconcile, watcher start, tray refresh, in that order. Every step past the
- * settings load is independently fallible; see `step`.
- */
-async function main(): Promise<void> {
-  // Defaults rather than a rejection: `App.tsx` renders nothing at all until
-  // `onboarded` settles, so letting this throw would leave a permanently
-  // blank window — the one failure mode with no visible explanation and no
-  // way out. Falling back shows the onboarding flow, which is both honest
-  // about the state and somewhere the user can act.
-  const [root, paused, onboarded, storedTheme] = await Promise.all([
-    ipc.fs.getRootFolder().catch(() => ""),
-    ipc.fs.getWatchPaused().catch(() => false),
-    ipc.db.getSetting("onboarded").catch(() => null),
-    ipc.db.getSetting("theme").catch(() => null),
-  ]);
-  Effect.runSync(SubscriptionRef.set(appStateShape.rootFolder, root));
-  Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, paused));
-  Effect.runSync(SubscriptionRef.set(appStateShape.onboarded, onboarded === "1"));
-  const theme: Theme = storedTheme === "light" || storedTheme === "dark" ? storedTheme : "system";
-  Effect.runSync(SubscriptionRef.set(appStateShape.theme, theme));
-  // Reconciles the synchronous localStorage cache (applied before first
-  // paint — see main.tsx) with the database's value, in case they differ.
-  applyTheme(theme);
-  cacheTheme(theme);
-
-  // Notification permission (macOS prompts once) — mounting Notifier runs it.
-  // Forked, never awaited: this used to be the first line of `main`, ahead of
-  // the `onboarded` write above, and `App.tsx` renders a blank titlebar until
-  // `onboarded` settles. That meant first launch showed an *empty window*
-  // until the user answered the system permission dialog. Nothing in startup
-  // needs the permission result.
-  managedRuntime.runFork(Notifier);
-
-  await step("queue pause state", () =>
+const startupHooks: StartupHooks = {
+  loadSettings: async () => {
+    const [root, paused, onboarded, storedTheme] = await Promise.all([
+      ipc.fs.getRootFolder().catch(() => ""),
+      ipc.fs.getWatchPaused().catch(() => false),
+      ipc.db.getSetting("onboarded").catch(() => null),
+      ipc.db.getSetting("theme").catch(() => null),
+    ]);
+    return {
+      rootFolder: root,
+      watchPaused: paused,
+      onboarded: onboarded === "1",
+      theme: storedTheme === "light" || storedTheme === "dark" ? storedTheme : "system",
+    };
+  },
+  publishSettings: (settings) => {
+    Effect.runSync(SubscriptionRef.set(appStateShape.rootFolder, settings.rootFolder));
+    Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, settings.watchPaused));
+    Effect.runSync(SubscriptionRef.set(appStateShape.onboarded, settings.onboarded));
+    Effect.runSync(SubscriptionRef.set(appStateShape.theme, settings.theme));
+    // Reconciles the synchronous localStorage cache (applied before first
+    // paint — see main.tsx) with the database's value, in case they differ.
+    applyTheme(settings.theme);
+    cacheTheme(settings.theme);
+  },
+  requestNotificationPermission: () => {
+    managedRuntime.runFork(Notifier);
+  },
+  setQueuePaused: (paused) =>
     managedRuntime.runPromise(Effect.andThen(DeployQueue, (q) => q.setPaused(paused))),
-  );
-
-  // Who is signed in? (keychain token against the REST API.)
-  void refreshAuth();
-
-  // deployNew: projects that appeared while the app was closed should go
-  // live on launch — folder = truth. The digest guard skips anything whose
-  // content already matches its last successful deploy.
-  await step("initial reconcile", () => reconcile(true));
-
-  // Hydrate latest deployment + stored snapshot per project — one IPC round
-  // trip regardless of project count (see screenshot.rs's get_snapshots_batch).
-  await step("hydrate deployments", async () => {
+  refreshAuth: () => {
+    void refreshAuth();
+  },
+  reconcile: () => reconcile(true),
+  hydrateDeployments: async () => {
     const latest = await ipc.db.latestDeployments();
     for (const d of latest) Effect.runSync(appStateShape.upsertDeployment(d));
-  });
-  await step("hydrate snapshots", async () => {
+  },
+  hydrateSnapshots: async () => {
+    // One IPC round trip regardless of project count — see screenshot.rs's
+    // get_snapshots_batch.
     const projectIds = Effect.runSync(SubscriptionRef.get(appStateShape.projects)).map((p) => p.id);
     if (projectIds.length === 0) return;
     const snaps = await ipc.snapshots.getBatch(projectIds);
@@ -547,16 +557,11 @@ async function main(): Promise<void> {
         return next;
       }),
     );
-  });
-  await step("tray refresh", () => refreshTray());
-
-  // Wire native events. The watcher is the single most important thing to get
-  // running — every step above is guarded precisely so a failure there can't
-  // stop execution from reaching this line.
-  await step("watch stream", () =>
+  },
+  refreshTray: () => refreshTray(),
+  startWatchStream: () =>
     managedRuntime.runPromise(Effect.andThen(WatchStream, (w) => w.start)),
-  );
-  await step("event listeners", async () => {
+  registerEventListeners: async () => {
     await ipc.events.onWatcherPaused((p) => {
       Effect.runSync(SubscriptionRef.set(appStateShape.watchPaused, p));
       managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.setPaused(p)));
@@ -565,23 +570,19 @@ async function main(): Promise<void> {
       Effect.runSync(SubscriptionRef.set(appStateShape.route, { name: "dashboard" } as const));
     });
     await ipc.events.onWatcherError((msg) => log.error("watcher", msg));
-  });
-
-  // Establish connectivity BEFORE draining held changes — draining while
-  // actually offline would just re-hold them (harmless), but draining after
-  // the state is known avoids doomed deploys on flaky startups.
-  await step("connectivity", () =>
+  },
+  startConnectivity: () =>
     managedRuntime.runPromise(Effect.andThen(Connectivity, (c) => c.start)),
-  );
-  await drainPersistedDirty();
-
-  // Forked, not awaited: the update check must never delay startup, and a
-  // few seconds' delay keeps it off the critical path entirely (nothing
-  // else at launch is waiting on it).
-  managedRuntime.runFork(
-    Effect.andThen(Updater, (u) => u.check).pipe(Effect.delay("4 seconds")),
-  );
-}
+  drainHeldChanges: () => drainPersistedDirty(),
+  scheduleUpdateCheck: () => {
+    managedRuntime.runFork(
+      Effect.andThen(Updater, (u) => u.check).pipe(Effect.delay("4 seconds")),
+    );
+  },
+  onStepError: (name, error) => {
+    log.error("composition", `startup step "${name}" failed: ${describeError(error)}`);
+  },
+};
 
 let started = false;
 
@@ -589,11 +590,11 @@ let started = false;
 export function start(): void {
   if (started) return;
   started = true;
-  // Every step inside `main` is individually guarded, so this should be
+  // Every step inside `runStartup` is individually guarded, so this should be
   // unreachable — but `started` is latched above and an unhandled rejection
   // here would be a silent dead app, so it gets a last-resort log rather than
   // vanishing into the console.
-  void main().catch((err) => {
+  void runStartup(startupHooks).catch((err) => {
     log.error("composition", `startup aborted: ${describeError(err)}`);
   });
 }

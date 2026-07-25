@@ -8,7 +8,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AccountSessionService } from "./account-session";
 import { AppState, type AppStateShape } from "./app-state";
 import { refreshGitInfo, shouldHoldAutoDeploy } from "./git";
-import { HeldChangesService } from "./held-changes";
+import { HeldChangesService, type HoldReason } from "./held-changes";
 import { Ipc, type IpcShape } from "./ipc";
 import { DeployQueue } from "./queue";
 
@@ -33,6 +33,20 @@ export interface AutoDeployGateShape {
    * naturally. An unresolved account switch holds everything, unconditionally.
    */
   readonly notifyChangeGitGated: (projectId: string) => Effect.Effect<void>;
+  /**
+   * A cause cleared: drop `reason` from every project holding it and re-gate
+   * the ones that are now completely free (CONTEXT.md's **Drain**).
+   *
+   * The counterpart to `mark`, and the reason it lives here rather than being
+   * open-coded per caller: releasing a **Hold** is never just bookkeeping —
+   * whatever comes back has to pass the **Gate** again, because the world may
+   * have moved while it waited (a rebase started, the account switched, the
+   * token expired). Callers that released and then deployed directly were
+   * skipping that re-check, and each one had its own copy of the loop.
+   *
+   * Returns the projects it re-gated.
+   */
+  readonly releaseHold: (reason: HoldReason) => Effect.Effect<string[]>;
 }
 
 export class AutoDeployGate extends Context.Service<AutoDeployGate, AutoDeployGateShape>()(
@@ -159,7 +173,15 @@ export const make = (deps: { ipc: IpcShape; appState: AppStateShape }) =>
       }
     });
 
-    return AutoDeployGate.of({ notifyChangeGitGated });
+    const releaseHold: AutoDeployGateShape["releaseHold"] = Effect.fn(
+      "AutoDeployGate.releaseHold",
+    )(function* (reason: HoldReason) {
+      const freed = yield* held.release(reason);
+      for (const projectId of freed) yield* notifyChangeGitGated(projectId);
+      return freed;
+    });
+
+    return AutoDeployGate.of({ notifyChangeGitGated, releaseHold });
   });
 
 export const layer: Layer.Layer<

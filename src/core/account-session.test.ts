@@ -34,14 +34,15 @@ interface Harness {
   authedAs: (string | null)[];
   notifications: string[];
   switches: { from: string; to: string }[];
-  cleared: { link: string[]; team: string[]; repo: string[]; file: string[] };
+  /** Every `startFresh` call, in order — one per resolution, by design. */
+  freshUnder: (string | null)[];
+  cleared: { file: string[] };
   freshStarts: () => number;
   reloads: () => number;
   resolved: () => number;
   accountSwitch: { from: string; to: string } | null;
   remembered: { uid: string; username: string }[];
   claimedFor: string[];
-  owners: { id: string; uid: string }[];
 }
 
 const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
@@ -55,10 +56,10 @@ const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
       authedAs: [] as (string | null)[],
       notifications: [] as string[],
       switches: [] as { from: string; to: string }[],
-      cleared: { link: [], team: [], repo: [], file: [] } as Harness["cleared"],
+      freshUnder: [] as (string | null)[],
+      cleared: { file: [] } as Harness["cleared"],
       remembered: [] as { uid: string; username: string }[],
       claimedFor: [] as string[],
-      owners: [] as { id: string; uid: string }[],
       freshStarts: () => counters.fresh,
       reloads: () => counters.reloads,
       resolved: () => counters.resolved,
@@ -94,14 +95,11 @@ const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
         { id: "p1", name: "blog" },
         { id: "p2", name: "shop" },
       ],
-      clearProjectLink: (id) => Effect.sync(() => void h.cleared.link.push(id)),
-      clearProjectTeam: (id) => Effect.sync(() => void h.cleared.team.push(id)),
-      clearRemoteRepo: (id) => Effect.sync(() => void h.cleared.repo.push(id)),
+      startFresh: (ownerUid) => Effect.sync(() => void h.freshUnder.push(ownerUid)),
       removeLinkFile: (name) => Effect.sync(() => void h.cleared.file.push(name)),
       rememberAccount: (uid, username) =>
         Effect.sync(() => void h.remembered.push({ uid, username })),
       claimUnownedProjects: (uid) => Effect.sync(() => void h.claimedFor.push(uid)),
-      setProjectOwner: (id, uid) => Effect.sync(() => void h.owners.push({ id, uid })),
       onFreshStart: () => void (counters.fresh += 1),
       reloadProjects: Effect.sync(() => void (counters.reloads += 1)),
       onSwitchResolved: () => void (counters.resolved += 1),
@@ -358,14 +356,14 @@ describe("AccountSession.refreshIdentity", () => {
 });
 
 describe("AccountSession.resolveSwitch", () => {
-  it.effect("'fresh' clears every per-project link, team, repo and link file", () =>
+  it.effect("'fresh' unlinks every project in one write and removes the link files", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       h.accountSwitch = { from: "olduser", to: "diego" };
       yield* h.session.resolveSwitch("fresh");
-      expect(h.cleared.link).toEqual(["p1", "p2"]);
-      expect(h.cleared.team).toEqual(["p1", "p2"]);
-      expect(h.cleared.repo).toEqual(["p1", "p2"]);
+      // One call, carrying the new owner — not four writes per project plus a
+      // separate ownership pass, which could disagree with each other.
+      expect(h.freshUnder).toEqual(["u1"]);
       expect(h.cleared.file).toEqual(["blog", "shop"]);
       expect(h.freshStarts()).toBe(1);
       expect(h.accountSwitch).toBeNull();
@@ -380,7 +378,7 @@ describe("AccountSession.resolveSwitch", () => {
       const h = yield* makeHarness();
       h.accountSwitch = { from: "olduser", to: "diego" };
       yield* h.session.resolveSwitch("keep");
-      expect(h.cleared.link).toEqual([]);
+      expect(h.freshUnder).toEqual([]);
       expect(h.freshStarts()).toBe(0);
       expect(h.accountSwitch).toBeNull();
       expect(h.settings).toMatchObject({ auth_user_id: "u1" });
@@ -392,8 +390,28 @@ describe("AccountSession.resolveSwitch", () => {
     Effect.gen(function* () {
       const h = yield* makeHarness();
       yield* h.session.resolveSwitch("fresh");
-      expect(h.cleared.link).toEqual([]);
+      expect(h.freshUnder).toEqual([]);
       expect(h.resolved()).toBe(0);
+    }),
+  );
+
+  /**
+   * The new account's identity can't always be fetched at the moment the user
+   * chooses (offline, or a token that just expired). The unlink still has to
+   * happen — the user asked for it — but ownership is left unset rather than
+   * pointing at an account the projects no longer have any link to.
+   */
+  it.effect("'fresh' with no reachable identity unlinks and leaves projects unowned", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        fetchUser: () => Effect.fail(new Error("offline")),
+      });
+      h.accountSwitch = { from: "olduser", to: "diego" };
+      yield* h.session.resolveSwitch("fresh");
+      expect(h.freshUnder).toEqual([null]);
+      expect(h.cleared.file).toEqual(["blog", "shop"]);
+      expect(h.accountSwitch).toBeNull();
+      expect(h.resolved()).toBe(1);
     }),
   );
 });

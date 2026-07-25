@@ -62,21 +62,49 @@ gates inspect repository state.
 **AutoDeployGate**:
 The module owning the Gate: the account-switch/git-operation branching, the
 held-changes marking, and the 15s timer that re-checks a project stuck
-mid-git-operation until it clears (or the project vanishes). Its one entry
-point, `notifyChangeGitGated`, hides all of that from callers.
+mid-git-operation until it clears (or the project vanishes). Two entry
+points hide all of that from callers — `notifyChangeGitGated` (a change
+arrived) and `releaseHold` (a cause cleared).
 
 **Hold**:
 A named reason a project's auto-deploys are suspended: `offline`,
-`account-switch`, or `git-operation`. Holds accumulate changes instead of
-deploying them.
+`account-switch`, `git-operation`, or `signed-out`. Holds accumulate changes
+instead of deploying them.
 
 **Held changes**:
 The single ledger of projects with active holds (module `held-changes`);
-releasing a project's last hold drains it exactly once.
+releasing a project's last hold frees it to drain exactly once. The ledger
+does the bookkeeping and reports who came free; it does not deploy.
 _Avoid_: dirty set, held set, pending changes (older names for its parts)
 
 **Drain**:
 Deploying each previously-held project exactly once after its holds clear.
+Always via `AutoDeployGate.releaseHold`, never by releasing and enqueueing
+directly — a drained change has waited, so it re-passes the Gate rather than
+trusting the verdict that was true when it was held.
+
+### Showing
+
+**Project row**:
+Everything the dashboard has decided about one **Project** before anything is
+drawn: whether it is deploying, which **Public URL** to show, which of the
+three body states applies (build log / failure / URL / never deployed), and
+its badges. Module `core/project-list.ts`, pure and tested there.
+_Avoid_: card model, view model
+
+**Project list**:
+The ordering, filtering and owner-visibility rules over the whole set —
+recency-then-alphabetical order, folder-presence filtering, name filtering,
+and whether whose-project-is-this is worth drawing at all. Same module; the
+card grid and the table are two renderings of one **Project row** list, which
+is what keeps them from disagreeing.
+
+**Project action**:
+One verb a user can apply to a **Project** (Visit, Copy URL, Redeploy, Delete
+on Vercel…), together with a verdict on whether it can run right now and a
+sentence saying why not. Module `core/project-actions.ts`. The verdict is
+shared; the *policy* on an unavailable action is not — the ⌘K palette drops
+it, the right-click menu greys it and shows the reason.
 
 ### Identity
 
@@ -115,7 +143,7 @@ it to the clipboard, and notify. Two entry points (`onTransition`,
 
 - The **Reconciler** turns fs events into **Project** changes and asks the **Queue** to deploy.
 - The **Queue** consults the **Guard**, and **AutoDeployGate** consults the **Gate**, before an auto **Deployment**.
-- Any **Hold** routes a project's changes into **Held changes**; releasing the last hold **drains** it.
+- Any **Hold** routes a project's changes into **Held changes**; **AutoDeployGate** releases the last hold and **drains** it back through the **Gate**.
 - The **Account session** raises **Account switch**, which places an `account-switch` **Hold** on every project.
 - A **Deployment** that reaches ready is handed to **ReadyEffects**, which resolves the **Public URL** and refreshes the effects seams (tray, notification, clipboard).
 

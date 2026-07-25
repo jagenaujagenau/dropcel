@@ -232,9 +232,7 @@ describe("AutoDeployGate", () => {
 
       // A token comes back: the hold lifts and the change deploys.
       h.setSignedIn("diego");
-      const freed = yield* held.release("signed-out");
-      expect(freed).toEqual(["p1"]);
-      for (const id of freed) yield* gate.notifyChangeGitGated(id);
+      expect(yield* gate.releaseHold("signed-out")).toEqual(["p1"]);
       expect(h.notifyChangeCalls).toEqual(["p1"]);
     }).pipe(Effect.provide(h.layer));
   });
@@ -253,6 +251,51 @@ describe("AutoDeployGate", () => {
       yield* gate.notifyChangeGitGated("p1");
       expect(yield* held.heldBy("account-switch")).toEqual(["p1"]);
       expect(yield* held.heldBy("signed-out")).toEqual([]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  /**
+   * The whole reason releasing a hold lives on the gate rather than being a
+   * `release` + deploy loop at each caller. A change can sit out an outage for
+   * hours; by the time the network comes back the repo may be mid-rebase, and
+   * the old callers deployed the broken working tree because they went
+   * straight to the queue.
+   */
+  it.effect("re-gates on release: a freed project that is now mid-rebase re-holds", () => {
+    const h = makeHarness();
+    h.setGitOperation(null);
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      const gate = yield* AutoDeployGate;
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+
+      // The world moved while the change waited.
+      h.setGitOperation("rebase");
+      expect(yield* gate.releaseHold("offline")).toEqual(["p1"]);
+
+      expect(h.notifyChangeCalls).toEqual([]);
+      expect(yield* held.heldBy("offline")).toEqual([]);
+      expect(yield* held.heldBy("git-operation")).toEqual(["p1"]);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("releasing one reason leaves a project its other holds", () => {
+    const h = makeHarness();
+    h.setGitOperation(null);
+    return Effect.gen(function* () {
+      yield* SubscriptionRef.set(h.appState.projects, [makeProject({ id: "p1", name: "blog" })]);
+      const gate = yield* AutoDeployGate;
+      const held = yield* HeldChangesService;
+      yield* held.mark("p1", "offline");
+      yield* held.mark("p1", "account-switch");
+
+      expect(yield* gate.releaseHold("offline")).toEqual([]);
+      expect(h.notifyChangeCalls).toEqual([]);
+      expect(yield* held.isHeld("p1")).toBe(true);
+
+      expect(yield* gate.releaseHold("account-switch")).toEqual(["p1"]);
+      expect(h.notifyChangeCalls).toEqual(["p1"]);
     }).pipe(Effect.provide(h.layer));
   });
 

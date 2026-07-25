@@ -13,6 +13,18 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { ProjectContextMenu, type ProjectMenuState } from "../components/ProjectContextMenu";
 import {
+  countLabel,
+  filterByName,
+  orderProjects,
+  ownersWorthShowing,
+  presentProjects,
+  projectRow,
+  rankFromOrder,
+  SEARCH_THRESHOLD,
+  statusLabel,
+  type ProjectBadge,
+} from "../core/project-list";
+import {
   accountsAtom,
   gitStatusAtom,
   heldReasonsAtom,
@@ -22,11 +34,10 @@ import {
   projectSnapshotAtom,
   projectsAtom,
   reconcile,
+  reloadProjects,
   rootFolderAtom,
-  setProjectsLocal,
   useAtomState,
 } from "../core/atoms";
-import type { HoldReason } from "../core/held-changes";
 import { LogViewerDialog } from "../components/LogViewerDialog";
 import { BuildLogTerminal } from "../components/BuildLogTerminal";
 import { FrameworkLogo } from "../components/FrameworkLogo";
@@ -34,14 +45,12 @@ import { AvatarFor } from "../components/UserAvatar";
 import {
   DeploymentDuration,
   DeploymentTiming,
-  isDeploying,
   StatusDot,
   StatusLabel,
 } from "../components/StatusIndicator";
 import { frameworkAccent, frameworkChip } from "../core/framework-theme";
 import {
   FRAMEWORK_LABELS,
-  publicUrlOf,
   type Account,
   type Deployment,
   type Framework,
@@ -63,9 +72,6 @@ import { Switch } from "../components/ui/switch";
 
 type View = "grid" | "table";
 
-/** Above this count, scanning the grid/table by eye stops being enough. */
-const SEARCH_THRESHOLD = 7;
-
 export function Dashboard() {
   const projects = useAtomState(projectsAtom, []);
   const presentOnDisk = useAtomState(presentOnDiskAtom, new Set<string>());
@@ -86,35 +92,18 @@ export function Dashboard() {
     void ipc.db.setSetting("dashboard_view", v).catch(() => {});
   };
 
-  // Most recently deployed first. `projectOrderAtom` is a delimited string so
-  // this subscription doesn't re-render the grid on every deployment tick —
-  // see the note on the atom.
-  const rank = new Map(
-    (order ? order.split(",") : []).map((id, i) => [id, i] as const),
+  // Every rule below lives in `core/project-list.ts` and is tested there.
+  // `projectOrderAtom` is a delimited string so this subscription doesn't
+  // re-render the grid on every deployment tick — see the note on the atom.
+  const visible = orderProjects(
+    presentProjects(projects, presentOnDisk),
+    rankFromOrder(order),
   );
-  const visible = projects
-    .filter((p) => presentOnDisk.has(p.name))
-    .sort(
-      (a, b) =>
-        (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
-          (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
-        // Never-deployed projects have no recency to sort by, so they settle
-        // alphabetically instead of in whatever order the DB returned them.
-        a.name.localeCompare(b.name),
-    );
   if (visible.length === 0) return <EmptyState />;
 
-  const query = search.trim().toLowerCase();
-  const matching = query ? visible.filter((p) => p.name.toLowerCase().includes(query)) : visible;
-
-  /*
-   * Ownership is only worth drawing when there is something to tell apart.
-   * Counted over the projects actually on screen rather than over the
-   * accounts table: having signed into a second account once, years ago, is
-   * not a reason to put an avatar on every card forever.
-   */
-  const owners = new Set(visible.map((p) => p.ownerUid).filter(Boolean));
-  const showOwners = owners.size > 1;
+  const matching = filterByName(visible, search);
+  const searching = search.trim().length > 0;
+  const showOwners = ownersWorthShowing(visible);
 
   const onRowMenu = (p: Project) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -125,9 +114,7 @@ export function Dashboard() {
     <div className="p-6">
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="shrink-0 text-xs tabular-nums text-muted">
-          {query
-            ? `${matching.length} of ${visible.length} projects`
-            : `${visible.length} ${visible.length === 1 ? "project" : "projects"}`}
+          {countLabel(matching.length, visible.length, searching)}
         </p>
         <div className="flex items-center gap-2">
           {visible.length > SEARCH_THRESHOLD && (
@@ -315,10 +302,7 @@ function AutoSwitch({ project, className }: { project: Project; className?: stri
       className={className}
       aria-label="Auto deploy"
       onCheckedChange={(v) => {
-        void ipc.db
-          .setAutoDeploy(project.id, v)
-          .then(() => ipc.db.listProjects())
-          .then(setProjectsLocal);
+        void ipc.db.setAutoDeploy(project.id, v).then(reloadProjects);
       }}
     />
   );
@@ -361,51 +345,53 @@ function MenuButton({
   );
 }
 
-function GitBadge({ project }: { project: Project }) {
+/**
+ * A project's badges: its branch (amber mid-operation), its branch lock, and
+ * why its changes haven't gone out yet.
+ *
+ * One component fed by `projectRow`'s decision, rather than three that each
+ * read their own atom and each decide whether to render. The card used to wrap
+ * them in `project.remoteRepo || project.lockedBranch` and the table did not,
+ * so a project held mid-rebase explained itself in one view and stayed silent
+ * in the other. Nothing to render is now an empty list, not a hidden row.
+ */
+function BadgeRow({ badges, className }: { badges: readonly ProjectBadge[]; className?: string }) {
+  if (badges.length === 0) return null;
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      {badges.map((badge) =>
+        badge.kind === "git" ? (
+          <Badge key="git" variant={badge.midOperation ? "warning" : "neutral"}>
+            <GitBranch className="h-3 w-3" />
+            {badge.label}
+          </Badge>
+        ) : badge.kind === "lock" ? (
+          // Set via the context menu's "Lock to Branch…" — shown here so the
+          // lock is visible without right-clicking.
+          <Badge key="lock" title={`Auto-deploy only runs on ${badge.branch}`}>
+            <Lock className="h-3 w-3" />
+            {badge.label}
+          </Badge>
+        ) : (
+          // The global offline pill in the header doesn't say *which* projects
+          // it applies to.
+          <Badge key="held" variant="warning" title="Deploys when the hold clears — nothing is lost.">
+            <WifiOff className="h-3 w-3" />
+            {badge.label}
+          </Badge>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** One project's row, decided once — see `core/project-list.ts`. Both views
+ * call this so neither can drift from the other. */
+function useProjectRow(project: Project) {
+  const latest = useAtomValue(latestDeploymentAtom(project.id));
   const git = useAtomValue(gitStatusAtom(project.id));
-  if (!git?.isRepo || !git.branch) return null;
-  return (
-    <Badge variant={git.operation ? "warning" : "neutral"}>
-      <GitBranch className="h-3 w-3" />
-      {git.operation ? `${git.branch} · ${git.operation}` : git.branch}
-    </Badge>
-  );
-}
-
-/** Auto-deploy is pinned to one branch (see core/git.ts's
- * `shouldHoldAutoDeploy`) — set via the project context menu's "Lock to
- * Branch…". Shown here too so the lock is visible without right-clicking. */
-function LockBadge({ project }: { project: Project }) {
-  if (!project.lockedBranch) return null;
-  return (
-    <Badge title={`Auto-deploy only runs on ${project.lockedBranch}`}>
-      <Lock className="h-3 w-3" />
-      {project.lockedBranch}
-    </Badge>
-  );
-}
-
-const HOLD_LABELS: Record<HoldReason, string> = {
-  offline: "Held — offline",
-  "account-switch": "Held — account switch",
-  "git-operation": "Held — git operation",
-  "signed-out": "Held — signed out",
-};
-
-/** Why this project's changes haven't deployed yet — the global offline pill
- * in the header doesn't say *which* projects it applies to. */
-function HeldBadge({ project }: { project: Project }) {
-  const reasons = useAtomValue(heldReasonsAtom(project.id));
-  if (!reasons || reasons.length === 0) return null;
-  return (
-    <Badge
-      variant="warning"
-      title="Deploys when the hold clears — nothing is lost."
-    >
-      <WifiOff className="h-3 w-3" />
-      {HOLD_LABELS[reasons[0]]}
-    </Badge>
-  );
+  const heldReasons = useAtomValue(heldReasonsAtom(project.id));
+  return projectRow({ project, latest, git, heldReasons });
 }
 
 // ---- card view -------------------------------------------------------------
@@ -461,18 +447,6 @@ function ChipMark({ framework, className }: { framework: Framework; className?: 
     </div>
   );
 }
-
-const STATUS_PILL_LABELS: Record<string, string> = {
-  none: "No deploys",
-  detected: "Detected",
-  queued: "Queued",
-  preparing: "Preparing",
-  uploading: "Uploading",
-  building: "Building",
-  ready: "Live",
-  failed: "Failed",
-  canceled: "Canceled",
-};
 
 /**
  * A deploying card, as an actual terminal window: title bar with traffic
@@ -535,7 +509,7 @@ function DeployingCard({
         />
         <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-2 py-0.5 font-mono text-[10px] text-white/75">
           <StatusDot state={deployment.state} />
-          {(STATUS_PILL_LABELS[deployment.state] ?? deployment.state).toLowerCase()}
+          {statusLabel(deployment.state).toLowerCase()}
         </span>
       </div>
     </div>
@@ -559,15 +533,14 @@ function ProjectCard({
    * without this the stats vanish the instant you go to act on them. */
   menuOpen?: boolean;
 }) {
-  const latest = useAtomValue(latestDeploymentAtom(project.id));
-  const url = publicUrlOf(latest);
+  const row = useProjectRow(project);
+  const { latest, deploying } = row;
   const [logsOpen, setLogsOpen] = useState(false);
 
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
   const accounts = useAtomValue(accountsAtom);
   const owner = showOwner && project.ownerUid ? accounts[project.ownerUid] : null;
   const accent = frameworkAccent(project.framework);
-  const deploying = isDeploying(latest?.state);
 
   /**
    * "This deploy just finished" — the one moment the live card animates in.
@@ -605,7 +578,7 @@ function ProjectCard({
     return () => clearTimeout(t);
   }, [snapshot]);
 
-  if (latest && isDeploying(latest.state)) {
+  if (row.body.kind === "log" && latest) {
     return (
       <DeployingCard
         project={project}
@@ -833,7 +806,7 @@ function ProjectCard({
             the kebab, and a card cannot afford to hide its own controls to
             show an error.
           */}
-          {latest?.state === "failed" && latest.error ? (
+          {row.body.kind === "failure" ? (
             <button
               className="mt-1 block w-full text-left"
               onClick={(e) => {
@@ -842,25 +815,19 @@ function ProjectCard({
               }}
             >
               <span className="line-clamp-2 text-[11px] leading-snug text-[oklch(0.85_0.14_23)]">
-                {latest.error}
+                {row.body.message}
               </span>
               <span className="mt-0.5 block text-[11px] font-medium text-white/80 underline underline-offset-2">
                 View build log
               </span>
             </button>
-          ) : url ? (
-            <UrlLine url={url} className="mt-1" tone="onGlass" />
+          ) : row.body.kind === "url" ? (
+            <UrlLine url={row.body.url} className="mt-1" tone="onGlass" />
           ) : (
             <p className="mt-1 text-xs text-white/60">Not deployed yet</p>
           )}
 
-          {(project.remoteRepo || project.lockedBranch) && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <GitBadge project={project} />
-              <LockBadge project={project} />
-              <HeldBadge project={project} />
-            </div>
-          )}
+          <BadgeRow badges={row.badges} className="mt-2" />
         </div>
 
         <div className="max-h-0 overflow-hidden opacity-0 transition-[max-height,opacity] duration-200 ease-out group-hover:max-h-16 group-hover:opacity-100 group-focus-within:max-h-16 group-focus-within:opacity-100 group-data-[menu-open=true]:max-h-16 group-data-[menu-open=true]:opacity-100 motion-reduce:transition-none">
@@ -966,11 +933,9 @@ function TableRow({
   project: Project;
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const latest = useAtomValue(latestDeploymentAtom(project.id));
+  const row = useProjectRow(project);
+  const { latest } = row;
   const snapshot = useAtomValue(projectSnapshotAtom(project.id));
-  const url = publicUrlOf(latest);
-  const failed = latest?.state === "failed" && latest.error;
-  const deploying = latest && isDeploying(latest.state);
   const [logsOpen, setLogsOpen] = useState(false);
 
   return (
@@ -999,14 +964,12 @@ function TableRow({
                 <span className="text-[11px] text-faint">
                   {FRAMEWORK_LABELS[project.framework as Framework] ?? project.framework}
                 </span>
-                <GitBadge project={project} />
-                <LockBadge project={project} />
-                <HeldBadge project={project} />
+                <BadgeRow badges={row.badges} />
               </div>
             </div>
           </div>
         </td>
-        {deploying ? (
+        {row.body.kind === "log" && latest ? (
           /*
             Mid-deploy the row shows its build log, the same swap the card view
             makes. Only the middle four columns are given up for it: Status
@@ -1029,7 +992,7 @@ function TableRow({
               <StatusLabel deployment={latest} />
             </td>
             <td className="hidden max-w-[280px] px-3 py-2 md:table-cell">
-              {url ? <UrlLine url={url} /> : <span className="text-xs text-faint">—</span>}
+              {row.url ? <UrlLine url={row.url} /> : <span className="text-xs text-faint">—</span>}
             </td>
             <td className="hidden px-3 py-2 text-right lg:table-cell">
               {latest ? (
@@ -1054,11 +1017,11 @@ function TableRow({
           <MenuButton onOpen={onContextMenu} />
         </td>
       </tr>
-      {failed && (
+      {row.body.kind === "failure" && (
         <tr className="border-b border-border/60 last:border-0">
           <td colSpan={7} className="px-3 pb-2 pt-0">
             <div className="banner-in rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-danger">
-              <p>{latest.error}</p>
+              <p>{row.body.message}</p>
               <button
                 className="mt-0.5 font-medium underline decoration-danger/40 underline-offset-2 hover:decoration-danger"
                 onClick={() => setLogsOpen(true)}

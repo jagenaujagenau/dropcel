@@ -1,5 +1,11 @@
 import { fuzzyMatch } from "../lib/fuzzy";
-import { publicUrlOf, type Deployment, type Project } from "./types";
+import {
+  availablePaletteActions,
+  projectActions,
+  type ProjectActionKind,
+} from "./project-actions";
+import { orderProjects, rankByRecency } from "./project-list";
+import type { Deployment, Project } from "./types";
 
 /**
  * The command palette's catalog and ranking — what ⌘K can do, and in what
@@ -57,38 +63,54 @@ export interface CatalogInput {
   dashboardUrlFor: (deployment: Deployment | undefined) => string | null;
 }
 
+/**
+ * The palette's own order for a project's commands.
+ *
+ * Deliberately not the menu's order (which `projectActions` returns). The
+ * URL-dependent commands come first here because they are what a project is
+ * *for* and what a user reaches for most; the menu leads with "Open in Vercel"
+ * because a menu is a fixed shape you learn the position of. Sharing the
+ * *availability verdict* between the two surfaces is the point — sharing their
+ * presentation was never going to be right.
+ */
+const PALETTE_ORDER: ProjectActionKind[] = [
+  "visit",
+  "copy-url",
+  "redeploy",
+  "deploy-preview",
+  "view-source",
+  "open-in-vercel",
+];
+
 function commandsForProject(
   project: Project,
   latest: Deployment | undefined,
   dashboardUrl: string | null,
 ): CommandSpec[] {
-  const url = publicUrlOf(latest);
   const base = { context: project.name, group: "Project" as const, projectId: project.id };
-  const cmds: CommandSpec[] = [];
 
-  // URL-dependent commands come first — they're what a project is *for*, and
-  // they're the ones a user reaches for most. Omitted entirely rather than
-  // shown disabled: a palette that lists an action and then does nothing when
-  // you press Enter is worse than one that doesn't offer it.
-  if (url) {
-    cmds.push(
-      { ...base, id: `${project.id}:visit`, kind: "visit", label: "Visit", hint: url.replace("https://", ""), url },
-      { ...base, id: `${project.id}:copy`, kind: "copy-url", label: "Copy URL", url },
-    );
-  }
-  cmds.push(
-    { ...base, id: `${project.id}:redeploy`, kind: "redeploy", label: "Redeploy" },
-    { ...base, id: `${project.id}:preview`, kind: "deploy-preview", label: "Deploy Preview" },
-    { ...base, id: `${project.id}:source`, kind: "view-source", label: "View Source" },
-  );
-  if (dashboardUrl) {
-    cmds.push({
+  // Unavailable actions are dropped rather than shown greyed: a palette that
+  // lists an action and then does nothing when you press Enter is worse than
+  // one that doesn't offer it. The menu makes the opposite call on the same
+  // verdict, and both are written down in `core/project-actions.ts`.
+  const available = availablePaletteActions(projectActions({ project, latest, dashboardUrl }));
+
+  available.sort((a, b) => PALETTE_ORDER.indexOf(a.kind) - PALETTE_ORDER.indexOf(b.kind));
+
+  const cmds: CommandSpec[] = [];
+  for (const action of available) {
+    const spec: CommandSpec = {
       ...base,
-      id: `${project.id}:vercel`,
-      kind: "open-in-vercel",
-      label: "Open in Vercel",
-      url: dashboardUrl,
-    });
+      id: `${project.id}:${action.kind}`,
+      kind: action.kind as CommandKind,
+      label: action.label,
+    };
+    if (action.url) spec.url = action.url;
+    // Only Visit shows the address as its trailing hint — Copy URL says what
+    // it copies by name, and repeating the host on both rows reads as two
+    // different links.
+    if (action.kind === "visit" && action.url) spec.hint = action.url.replace("https://", "");
+    cmds.push(spec);
   }
   return cmds;
 }
@@ -126,15 +148,9 @@ const DEFAULT_PROJECTS = 1;
 export function buildCatalog(input: CatalogInput): CommandSpec[] {
   // Most recently deployed first, so "recent" means recent rather than
   // whatever order the projects happened to arrive in. Never-deployed projects
-  // sort last, alphabetically.
-  const byRecency = [...input.projects].sort((a, b) => {
-    const da = input.latestByProject[a.id]?.startedAt;
-    const db = input.latestByProject[b.id]?.startedAt;
-    if (da && db) return db.localeCompare(da);
-    if (da) return -1;
-    if (db) return 1;
-    return a.name.localeCompare(b.name);
-  });
+  // sort last, alphabetically. Shared with the dashboard — this used to be a
+  // third hand-written copy of the same product rule.
+  const byRecency = orderProjects(input.projects, rankByRecency(input.latestByProject));
 
   const projectCmds = byRecency.flatMap((p, i) => {
     const latest = input.latestByProject[p.id];

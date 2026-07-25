@@ -6,7 +6,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, FileText, Lock, Trash2, Triangle, Users } from "lucide-react";
 import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment-actions";
 import { deployProject, latestDeploymentAtom, reconcile } from "../core/atoms";
-import { publicUrlOf, type Project } from "../core/types";
+import { projectActions, type ProjectActionKind } from "../core/project-actions";
+import type { Project } from "../core/types";
 import * as ipc from "../lib/ipc";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuState } from "./ui/context-menu";
@@ -47,24 +48,25 @@ export function ProjectContextMenu({
   };
 
   const latest = useAtomValue(latestDeploymentAtom(menu.project.id));
-  const publicUrl = publicUrlOf(latest);
 
-  const openInVercel = async () => {
-    pendingRef.current = true;
-    const url = projectDashboardUrlFrom(latest?.inspectorUrl ?? null);
-    if (url) {
-      void openUrl(url);
-      pendingRef.current = false;
-      onClose();
-    } else {
-      setNote("Deploy once first — then this opens the Vercel page.");
-      setTimeout(() => {
-        setNote(null);
-        pendingRef.current = false;
-        onClose();
-      }, 6000);
-    }
+  /**
+   * Availability comes from `core/project-actions.ts`, shared with ⌘K. The
+   * two surfaces then apply different *policies* to the same verdict — the
+   * palette drops what it can't run, a menu greys it out and says why, because
+   * a menu whose items move around is a menu you have to re-read every time.
+   */
+  const actions = new Map(
+    projectActions({
+      project: menu.project,
+      latest,
+      dashboardUrl: projectDashboardUrlFrom(latest?.inspectorUrl ?? null),
+    }).map((a) => [a.kind, a] as const),
+  );
+  const action = (kind: ProjectActionKind) => {
+    const a = actions.get(kind)!;
+    return { label: a.label, disabled: a.unavailable !== null, title: a.unavailable ?? undefined };
   };
+  const publicUrl = actions.get("visit")?.url ?? null;
 
   return (
     <>
@@ -74,19 +76,17 @@ export function ProjectContextMenu({
         onClose={closeMenu}
         items={[
           {
-            label: "Open in Vercel",
+            ...action("open-in-vercel"),
             icon: <Triangle className="h-3.5 w-3.5 fill-current" />,
-            onSelect: () => void openInVercel(),
+            onSelect: () => void openUrl(actions.get("open-in-vercel")!.url!),
           },
           {
-            label: "Visit",
+            ...action("visit"),
             icon: <ExternalLink className="h-4 w-4" />,
-            disabled: !publicUrl,
             onSelect: () => void openUrl(publicUrl!),
           },
           {
-            label: "Copy URL",
-            disabled: !publicUrl,
+            ...action("copy-url"),
             onSelect: () => {
               pendingRef.current = true;
               void writeText(publicUrl!).then(() => {
@@ -100,31 +100,28 @@ export function ProjectContextMenu({
             },
           },
           {
-            label: "View Source",
+            ...action("view-source"),
             separatorBefore: true,
             onSelect: () => void ipc.fs.openRootFolder(menu.project.name),
           },
           {
-            label: "View Build Log",
+            ...action("view-build-log"),
             icon: <FileText className="h-4 w-4" />,
-            disabled: !latest,
             onSelect: () => {
               pendingRef.current = true;
               setLogsOpen(true);
             },
           },
           {
-            label: "Redeploy",
+            ...action("redeploy"),
             onSelect: () => deployProject(menu.project.id, "production"),
           },
           {
-            label: "Deploy Preview",
+            ...action("deploy-preview"),
             onSelect: () => deployProject(menu.project.id, "preview"),
           },
           {
-            label: menu.project.lockedBranch
-              ? `Locked to ${menu.project.lockedBranch}…`
-              : "Lock to Branch…",
+            ...action("lock-branch"),
             icon: <Lock className="h-3.5 w-3.5" />,
             onSelect: () => {
               pendingRef.current = true;
@@ -132,7 +129,7 @@ export function ProjectContextMenu({
             },
           },
           {
-            label: "Deploy Under…",
+            ...action("deploy-under"),
             icon: <Users className="h-3.5 w-3.5" />,
             onSelect: () => {
               pendingRef.current = true;
@@ -140,7 +137,7 @@ export function ProjectContextMenu({
             },
           },
           {
-            label: "Move to Trash…",
+            ...action("move-to-trash"),
             icon: <Trash2 className="h-4 w-4" />,
             separatorBefore: true,
             onSelect: () => {
@@ -165,7 +162,7 @@ export function ProjectContextMenu({
             },
           },
           {
-            label: "Delete on Vercel…",
+            ...action("delete-on-vercel"),
             onSelect: () => {
               pendingRef.current = true;
               setRemoteDeleteOpen(true);
