@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::Deserialize;
@@ -15,6 +16,9 @@ pub const TRAY_ID: &str = "main-tray";
 /// Last aggregate status painted onto the tray, so an appearance change can
 /// re-render the same icon in the other menubar color.
 static LAST_STATUS: Mutex<&'static str> = Mutex::new("idle");
+
+/// Whether the menubar is currently drawn dark — see [`menubar_is_dark`].
+static MENUBAR_DARK: AtomicBool = AtomicBool::new(false);
 
 // ---- status icon rendering -------------------------------------------------
 
@@ -37,19 +41,18 @@ fn inside_triangle(x: f32, y: f32) -> bool {
 }
 
 /// True when the menubar is drawn dark, so a non-template icon has to supply
-/// its own white artwork. Read from `AppleInterfaceStyle` (unset = light),
-/// which is thread-safe — `render_icon` runs off the main thread.
-#[cfg(target_os = "macos")]
+/// its own white artwork. Cached rather than read per render: the source of
+/// truth is an AppKit appearance, which is main-thread-only, while
+/// `render_icon` runs wherever `update_tray` was called from. `tray_theme`
+/// keeps it current on macOS; elsewhere it stays false.
 fn menubar_is_dark() -> bool {
-    use objc2_foundation::{NSString, NSUserDefaults};
-    NSUserDefaults::standardUserDefaults()
-        .stringForKey(&NSString::from_str("AppleInterfaceStyle"))
-        .is_some_and(|style| style.to_string().eq_ignore_ascii_case("dark"))
+    MENUBAR_DARK.load(Ordering::Relaxed)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn menubar_is_dark() -> bool {
-    false
+/// Record the menubar appearance. Returns true when it actually changed, so
+/// the caller can skip a needless repaint.
+pub fn set_menubar_dark(dark: bool) -> bool {
+    MENUBAR_DARK.swap(dark, Ordering::Relaxed) != dark
 }
 
 /// Render the tray icon for an aggregate status. Idle/ready use a pure black

@@ -89,7 +89,7 @@ fn dropped_paths(info: &ProtocolObject<dyn NSDraggingInfo>) -> Vec<String> {
 }
 
 /// Locate the tray icon's NSStatusBarButton among the app's windows.
-fn find_status_button(mtm: MainThreadMarker) -> Option<Retained<NSView>> {
+pub(crate) fn find_status_button(mtm: MainThreadMarker) -> Option<Retained<NSView>> {
     let app = NSApplication::sharedApplication(mtm);
     for window in app.windows() {
         let class_name = unsafe {
