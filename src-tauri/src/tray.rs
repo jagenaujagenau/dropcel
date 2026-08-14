@@ -189,14 +189,24 @@ fn build_menu(
     Ok(menu)
 }
 
+/// Install the icon for `status`.
+///
+/// Both halves have to go in together: `set_icon` hardcodes the template flag
+/// to false as it installs the image, so a separate `set_icon_as_template`
+/// only ever marks the image it replaces. Setting them apart leaves every
+/// icon after the first non-template — a pure black triangle that ignores the
+/// menubar instead of the white one macOS would have drawn.
+fn set_tray_icon(tray: &tauri::tray::TrayIcon, status: &str) {
+    let (icon, template) = render_icon(status);
+    let _ = tray.set_icon_with_as_template(Some(icon), template);
+}
+
 /// Repaint the tray icon for the status it already shows. Called when the
 /// menubar switches between light and dark, where only the color changes.
 pub fn refresh_icon(app: &AppHandle) {
     let status = *LAST_STATUS.lock().unwrap();
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let (icon, template) = render_icon(status);
-        let _ = tray.set_icon_as_template(template);
-        let _ = tray.set_icon(Some(icon));
+        set_tray_icon(&tray, status);
     }
 }
 
@@ -261,9 +271,7 @@ pub fn update_tray(
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_menu(Some(menu))
             .map_err(|e| AppError::Message(e.to_string()))?;
-        let (icon, template) = render_icon(status);
-        let _ = tray.set_icon_as_template(template);
-        let _ = tray.set_icon(Some(icon));
+        set_tray_icon(&tray, status);
         let tip = match status {
             "deploying" => "Dropcel — deploying…",
             "failed" => "Dropcel — a deployment failed",
