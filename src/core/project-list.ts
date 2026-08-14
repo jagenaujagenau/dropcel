@@ -128,6 +128,10 @@ export function isDeploying(state: string | undefined): boolean {
  * same database. `ready` is the state machine's word; "Live" is the product's,
  * and the product's is the one the user is asking about.
  */
+// Looked up by a state string straight from SQLite, which a row written by
+// an older build can spell in ways this union no longer lists — statusLabel
+// falls back to the raw value for exactly that case.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 export const STATUS_LABELS: Record<string, string> = {
   none: "No deploys",
   detected: "Detected",

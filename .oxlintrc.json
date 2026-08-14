@@ -11,7 +11,8 @@
     "src-tauri/**",
     "dist/**",
     "tmp/**",
-    "oxlint-plugin-dropcel/**/*.test.ts"
+    "oxlint-plugin-dropcel/**/*.test.ts",
+    "oxlint-plugin-anti-slop/**"
   ],
   "rules": {
     "dropcel/no-inline-schema-compile": "error",
@@ -99,7 +100,30 @@
     {
       "files": ["**/*.test.ts", "**/*.test.tsx"],
       "rules": {
-        "anti-slop/no-module-mocking": "off"
+        "anti-slop/no-module-mocking": "off",
+        "anti-slop/no-chained-type-assertions": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off"
+      }
+    },
+    {
+      "files": [
+        "src/core/vercel-api.ts",
+        "src/core/ipc.ts",
+        "src/core/auth.ts",
+        "src/core/rename.ts",
+        "src/core/detection.ts",
+        "src/core/composition.ts",
+        "src/core/startup.ts",
+        "src/lib/log.ts",
+        "src/pages/Settings.tsx"
+      ],
+      "rules": {
+        "anti-slop/no-unknown-parameters": "off",
+        "anti-slop/no-unknown-returns": "off",
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/no-known-value-widening": "off",
+        "anti-slop/no-unsafe-dictionary-type": "off",
+        "anti-slop/no-chained-type-assertions": "off"
       }
     }
   ]

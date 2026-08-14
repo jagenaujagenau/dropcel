@@ -11,6 +11,9 @@ import type { DeploymentState } from "./types";
  *   (any non-terminal state) → canceled | failed
  */
 
+// The annotation is what types the terminal states' empty arrays: with
+// `satisfies` they infer never[] and canTransition stops compiling.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 const TRANSITIONS: Record<DeploymentState, readonly DeploymentState[]> = {
   detected: ["queued"],
   queued: ["preparing", "canceled", "failed"],

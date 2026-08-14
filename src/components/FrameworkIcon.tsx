@@ -97,6 +97,9 @@ function ViteMark({ className }: { className?: string }) {
   );
 }
 
+// Deliberately sparse: only the frameworks without a logo get a monogram,
+// and Partial is what lets the lookup below return undefined for the rest.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 const MONOGRAMS: Partial<Record<Framework, string>> = {
   nuxt: "Nu",
   astro: "As",

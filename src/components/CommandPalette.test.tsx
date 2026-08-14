@@ -57,6 +57,9 @@ const deployment = (projectId: string, over: Partial<Deployment> = {}): Deployme
 });
 
 const PROJECTS = [project("landing-page"), project("marketing-site")];
+// Keyed by project id and looked up as a plain string, so the open key type
+// is the contract here rather than lost evidence.
+// oxlint-disable-next-line anti-slop/no-known-value-widening
 const LATEST: Record<string, Deployment> = {
   "p-landing-page": deployment("p-landing-page"),
   "p-marketing-site": deployment("p-marketing-site"),

@@ -10,13 +10,19 @@ import { DropZone } from "./DropZone";
  * success is not.
  */
 
+/** The Tauri drag-drop events DropZone reacts to. */
+type DragDropPayload =
+  | { type: "enter" | "over"; position: { x: number; y: number } }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
 const mocks = vi.hoisted(() => ({
   importDroppedPath: vi.fn(),
   takePendingDrops: vi.fn(),
   /** The window drag-drop callback registered by DropZone. */
   // SAFETY: widening, not narrowing — the field starts empty and the mocked
   // webview below assigns the real callback when DropZone registers it.
-  onDrop: null as null | ((payload: unknown) => void),
+  onDrop: null as null | ((payload: DragDropPayload) => void),
 }));
 
 vi.mock("../lib/ipc", () => ({

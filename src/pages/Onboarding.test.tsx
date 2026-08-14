@@ -21,12 +21,17 @@ vi.mock("../lib/ipc", () => ({
   fs: { createExampleProject: vi.fn(), openRootFolder: vi.fn() },
 }));
 
+/** The three atoms this page reads are stubbed as bare objects. */
+type StubAtom = Record<string, never>;
+
 vi.mock("../core/atoms", () => ({
   accountStateAtom: {},
   authErrorAtom: {},
   rootFolderAtom: {},
   refreshAuth: mocks.refreshAuth,
-  useAtomState: (_atom: unknown, initial: unknown) => initial,
+  // The real hook unwraps an AsyncResult and falls back to `initial`; every
+  // stub atom above is permanently pending, so the fallback is all of it.
+  useAtomState: <T,>(_atom: StubAtom, initial: T): T => initial,
 }));
 
 vi.mock("../core/account-session", () => ({ describeAuthError: () => null }));
