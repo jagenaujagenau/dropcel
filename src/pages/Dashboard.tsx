@@ -710,9 +710,28 @@ function ProjectCard({
             broken;
           - the contour and drop shadow on the card itself, for thickness.
       */}
+      {/*
+        Hovering thins the pane to 2px and drops the fill, so the card shows
+        the site it actually deployed. This is the one moment the screenshot
+        stops being texture and becomes information — "which of these is the
+        one I want" is answered by the page itself, not by a frosted
+        impression of it.
+
+        Not all the way to zero: a whisper of blur keeps the pane a material
+        that got thinner rather than a layer that blinked out, and it holds
+        the top-left mark and the menu button legible over a busy header.
+
+        Slower coming in (320ms) than the scrim that follows it (200ms) — the
+        reveal is a focus pull, and at the scrim's speed it snapped. Leaving
+        is quicker (200ms) because by then the pointer has moved on and the
+        card is getting out of the way.
+
+        The bottom scrim is untouched: the name and URL sit on it, and a
+        sharpened screenshot underneath is exactly when they need it most.
+      */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-white/[0.06] backdrop-blur-[14px] backdrop-saturate-[180%]"
+        className="pointer-events-none absolute inset-0 bg-white/[0.06] backdrop-blur-[14px] backdrop-saturate-[180%] transition-[backdrop-filter,background-color] duration-200 ease-out group-hover:bg-white/[0.02] group-hover:backdrop-blur-[2px] group-hover:duration-[320ms] group-focus-within:bg-white/[0.02] group-focus-within:backdrop-blur-[2px] group-data-[menu-open=true]:bg-white/[0.02] group-data-[menu-open=true]:backdrop-blur-[2px] motion-reduce:transition-none"
       />
 
       {/*
