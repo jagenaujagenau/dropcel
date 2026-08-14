@@ -17,6 +17,9 @@ mod tray;
 /// `#![cfg]`, and its call site in `startup.rs` is gated to match.
 #[cfg(target_os = "macos")]
 mod tray_drop;
+/// macOS-only for the same reason as `tray_drop`: AppKit/objc2 only.
+#[cfg(target_os = "macos")]
+mod tray_theme;
 mod watcher;
 
 use tauri_plugin_autostart::MacosLauncher;
@@ -126,6 +129,14 @@ pub fn run() {
             // Dock-icon drops / "Open With" (macOS): stash the paths and
             // nudge the frontend, which drains them through the same import
             // flow as window and tray drops.
+            // Clicking the dock icon while the window is hidden (the state
+            // CloseRequested leaves it in) only fires Reopen — without this the
+            // app looks dead until the tray menu is used.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main_window(app_handle);
+                return;
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {
                 use tauri::{Emitter, Manager};

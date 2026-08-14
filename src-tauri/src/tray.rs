@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use serde::Deserialize;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -9,6 +11,10 @@ use crate::folder_icons::{self, FolderIconCache};
 use crate::watcher::WatcherState;
 
 pub const TRAY_ID: &str = "main-tray";
+
+/// Last aggregate status painted onto the tray, so an appearance change can
+/// re-render the same icon in the other menubar color.
+static LAST_STATUS: Mutex<&'static str> = Mutex::new("idle");
 
 // ---- status icon rendering -------------------------------------------------
 
@@ -30,16 +36,39 @@ fn inside_triangle(x: f32, y: f32) -> bool {
     !(has_neg && has_pos)
 }
 
+/// True when the menubar is drawn dark, so a non-template icon has to supply
+/// its own white artwork. Read from `AppleInterfaceStyle` (unset = light),
+/// which is thread-safe — `render_icon` runs off the main thread.
+#[cfg(target_os = "macos")]
+fn menubar_is_dark() -> bool {
+    use objc2_foundation::{NSString, NSUserDefaults};
+    NSUserDefaults::standardUserDefaults()
+        .stringForKey(&NSString::from_str("AppleInterfaceStyle"))
+        .is_some_and(|style| style.to_string().eq_ignore_ascii_case("dark"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn menubar_is_dark() -> bool {
+    false
+}
+
 /// Render the tray icon for an aggregate status. Idle/ready use a pure black
 /// template triangle (macOS recolors it per menubar theme); transient states
-/// use a mid-gray triangle (visible on light and dark) plus a colored dot.
+/// carry a colored dot, which rules out template mode — so the triangle picks
+/// its own color to match the menubar: white on dark, near-black on light.
 fn render_icon(status: &str) -> (Image<'static>, bool) {
     let (dot, template): (Option<[u8; 4]>, bool) = match status {
         "deploying" => (Some([245, 166, 35, 255]), false),
         "failed" => (Some([255, 77, 79, 255]), false),
         _ => (None, true),
     };
-    let tri_color: [u8; 3] = if template { [0, 0, 0] } else { [135, 135, 135] };
+    let tri_color: [u8; 3] = if template {
+        [0, 0, 0]
+    } else if menubar_is_dark() {
+        [255, 255, 255]
+    } else {
+        [40, 40, 40]
+    };
     let mut rgba = vec![0u8; (ICON_SIZE * ICON_SIZE * 4) as usize];
     const SS: u32 = 3; // supersampling for smooth edges
 
@@ -157,7 +186,18 @@ fn build_menu(
     Ok(menu)
 }
 
-fn show_main_window(app: &AppHandle) {
+/// Repaint the tray icon for the status it already shows. Called when the
+/// menubar switches between light and dark, where only the color changes.
+pub fn refresh_icon(app: &AppHandle) {
+    let status = *LAST_STATUS.lock().unwrap();
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let (icon, template) = render_icon(status);
+        let _ = tray.set_icon_as_template(template);
+        let _ = tray.set_icon(Some(icon));
+    }
+}
+
+pub fn show_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
@@ -214,6 +254,7 @@ pub fn update_tray(
     let menu =
         build_menu(&app, &projects, paused).map_err(|e| AppError::Message(e.to_string()))?;
     let status = aggregate_status(&projects);
+    *LAST_STATUS.lock().unwrap() = status;
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         tray.set_menu(Some(menu))
             .map_err(|e| AppError::Message(e.to_string()))?;

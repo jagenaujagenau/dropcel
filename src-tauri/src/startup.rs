@@ -2,7 +2,7 @@ use tauri::Manager;
 
 use crate::{db, folder_icons, logger, projects, tray, watcher};
 #[cfg(target_os = "macos")]
-use crate::tray_drop;
+use crate::{tray_drop, tray_theme};
 
 /// Ordered app wiring, called once from the tauri setup closure.
 /// Ordering constraint: logger before db (so db failures are loggable), db
@@ -42,5 +42,7 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     tray::init(app.handle())?;
     #[cfg(target_os = "macos")]
     tray_drop::attach(app.handle());
+    #[cfg(target_os = "macos")]
+    tray_theme::attach(app.handle());
     Ok(())
 }
