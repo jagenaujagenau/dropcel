@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "plugins": ["typescript", "import", "oxc", "eslint", "unicorn", "react", "react-hooks"],
-  "jsPlugins": ["./oxlint-plugin-dropcel/index.ts", "./oxlint-plugin-anti-slop/index.ts"],
+  "jsPlugins": ["./tools/oxlint/dropcel/index.ts", "./tools/oxlint/anti-slop/index.ts"],
   "categories": {
     "correctness": "error",
     "suspicious": "error",
@@ -11,8 +11,8 @@
     "src-tauri/**",
     "dist/**",
     "tmp/**",
-    "oxlint-plugin-dropcel/**/*.test.ts",
-    "oxlint-plugin-anti-slop/**"
+    "tools/oxlint/dropcel/**/*.test.ts",
+    "tools/oxlint/anti-slop/**"
   ],
   "rules": {
     "dropcel/no-inline-schema-compile": "error",
@@ -84,13 +84,13 @@
   },
   "overrides": [
     {
-      "files": ["**/*.test.ts", "oxlint-plugin-dropcel/**"],
+      "files": ["**/*.test.ts", "tools/oxlint/dropcel/**"],
       "rules": {
         "eslint/no-console": "off"
       }
     },
     {
-      "files": ["oxlint-plugin-dropcel/**", "oxlint-plugin-anti-slop/**"],
+      "files": ["tools/oxlint/dropcel/**"],
       "rules": {
         "anti-slop/no-unknown-parameters": "off",
         "anti-slop/no-runtime-typeof": "off",
