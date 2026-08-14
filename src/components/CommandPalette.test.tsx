@@ -16,7 +16,7 @@ import type { Deployment, Project } from "../core/types";
  */
 
 const deployProject = vi.fn();
-const reconcile = vi.fn();
+const rescan = vi.fn();
 const setRoute = vi.fn();
 const openUrl = vi.fn();
 const writeText = vi.fn();
@@ -70,7 +70,7 @@ vi.mock("../core/atoms", () => ({
   presentOnDiskAtom: "present",
   latestByProjectAtom: "latest",
   deployProject: (...a: unknown[]) => deployProject(...a),
-  reconcile: (...a: unknown[]) => reconcile(...a),
+  rescan: (...a: unknown[]) => rescan(...a),
   setRoute: (...a: unknown[]) => setRoute(...a),
   useAtomState: (atom: string) =>
     atom === "projects" ? PROJECTS : new Set(PROJECTS.map((p) => p.name)),
@@ -179,7 +179,9 @@ describe("CommandPalette", () => {
     open();
     type("rescan");
     press("Enter");
-    expect(reconcile).toHaveBeenCalledWith(true);
+    // Rescan goes through `rescan`, not `reconcile`: a refresh the user asked
+    // for re-checks Vercel as well as the folder.
+    expect(rescan).toHaveBeenCalled();
 
     cleanup();
     vi.clearAllMocks();

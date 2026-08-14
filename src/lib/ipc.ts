@@ -35,6 +35,12 @@ export const db = {
    * see commands.rs's `forget_project` for why the two halves are not
    * sequenced from here. */
   forgetProject: (projectId: string) => invoke<void>("forget_project", { projectId }),
+  /** Unlink and drop everything that only existed because the Vercel project
+   * did — deployments, logs, domains, snapshot — keeping the row, the folder
+   * and the project's own settings. One call, same reason as `forgetProject`:
+   * a half-reset project still shows a live URL for a project that is gone. */
+  resetProjectRemote: (projectId: string) =>
+    invoke<void>("reset_project_remote", { projectId }),
   claimUnownedProjects: (ownerUid: string) =>
     invoke<number>("db_claim_unowned_projects", { ownerUid }),
   /** "Start Fresh": unlink every project from the old account and hand them

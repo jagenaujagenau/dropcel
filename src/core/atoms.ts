@@ -15,6 +15,8 @@ import {
   refreshAccounts,
   refreshAuth,
   reloadProjects,
+  rescan,
+  resetProjectRemote,
   resolveAccountSwitch,
 } from "./composition";
 import { Connectivity } from "./effects";
@@ -242,5 +244,7 @@ export {
   refreshAccounts,
   refreshAuth,
   reloadProjects,
+  rescan,
+  resetProjectRemote,
   resolveAccountSwitch,
 };

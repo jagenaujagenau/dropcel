@@ -177,6 +177,36 @@ describe("api deployer", () => {
     expect(outcome.retryable).toBe(false);
   });
 
+  it("a 404 on create means the project was deleted on Vercel, and says so", async () => {
+    mocks.createDeployment.mockReturnValue(
+      Effect.fail(apiError({ status: 404, code: "not_found", message: "Not Found" })),
+    );
+    const missing: string[] = [];
+    const h = makeHarness({ onRemoteProjectMissing: (name) => missing.push(name) });
+    const outcome = await deploy(h).done;
+
+    // Not retryable: the project is gone, so every attempt fails identically.
+    expect(outcome).toMatchObject({ ok: false, retryable: false });
+    expect(outcome.error).toContain("no longer exists on Vercel");
+    expect(missing).toEqual(["blog"]);
+  });
+
+  it("does not blame a deleted project when the deploy never named one", async () => {
+    mocks.createDeployment.mockReturnValue(
+      Effect.fail(apiError({ status: 404, code: "not_found", message: "Not Found" })),
+    );
+    const missing: string[] = [];
+    const h = makeHarness({
+      getProjectMeta: async () => ({ framework: "static", teamId: null, vercelProjectId: null }),
+      onRemoteProjectMissing: (name) => missing.push(name),
+    });
+    const outcome = await deploy(h).done;
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).not.toContain("no longer exists on Vercel");
+    expect(missing).toEqual([]);
+  });
+
   it("build poll CANCELED maps to a canceled outcome", async () => {
     mocks.createDeployment.mockReturnValue(Effect.succeed(dpl()));
     mocks.getDeployment.mockReturnValue(Effect.succeed(dpl({ readyState: "CANCELED" })));

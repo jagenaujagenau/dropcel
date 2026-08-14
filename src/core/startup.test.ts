@@ -58,6 +58,7 @@ function recorder(overrides: Partial<StartupHooks> = {}): Recorder {
     registerEventListeners: track("registerEventListeners"),
     startConnectivity: track("startConnectivity"),
     drainHeldChanges: track("drainHeldChanges"),
+    verifyRemoteProjects: () => calls.push("verifyRemoteProjects"),
     scheduleUpdateCheck: () => calls.push("scheduleUpdateCheck"),
     onStepError: (step, error) => errors.push({ step, error }),
     ...overrides,
@@ -84,6 +85,7 @@ describe("runStartup", () => {
       "registerEventListeners",
       "startConnectivity",
       "drainHeldChanges",
+      "verifyRemoteProjects",
       "scheduleUpdateCheck",
     ]);
     expect(r.errors).toEqual([]);

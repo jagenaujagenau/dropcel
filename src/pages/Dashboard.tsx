@@ -33,7 +33,7 @@ import {
   projectOrderAtom,
   projectSnapshotAtom,
   projectsAtom,
-  reconcile,
+  rescan,
   reloadProjects,
   rootFolderAtom,
   useAtomState,
@@ -1075,7 +1075,7 @@ function EmptyState() {
       </Button>
       <button
         className="rise-in text-[11px] text-faint hover:text-muted [animation-delay:120ms]"
-        onClick={() => void reconcile(true)}
+        onClick={() => void rescan()}
       >
         Rescan folder
       </button>

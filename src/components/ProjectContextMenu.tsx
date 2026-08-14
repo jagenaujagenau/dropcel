@@ -5,7 +5,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, FileText, Lock, Trash2, Triangle, Users } from "lucide-react";
 import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment-actions";
-import { deployProject, latestDeploymentAtom, reconcile } from "../core/atoms";
+import { deployProject, latestDeploymentAtom, reconcile, resetProjectRemote } from "../core/atoms";
 import { projectActions, type ProjectActionKind } from "../core/project-actions";
 import type { Project } from "../core/types";
 import { describeError } from "../lib/log";
@@ -233,13 +233,24 @@ function RemoteDeleteDialog({ project, onDone }: { project: Project; onDone: () 
     setBusy(true);
     setError(null);
     const r = await deleteRemoteProject(project);
-    setBusy(false);
-    if (r.ok) {
-      await ipc.db.setProjectLink(project.id, null).catch(() => {});
-      onDone();
-    } else {
+    if (!r.ok) {
+      setBusy(false);
       setError(r.message);
+      return;
     }
+    // The remote is gone; the local record has to follow in the same breath.
+    // Reported rather than swallowed — a project left linked to a deleted
+    // Vercel project keeps showing a live URL that 404s, and deploying to it
+    // fails in a way that reads as the app's fault.
+    try {
+      await resetProjectRemote(project);
+    } catch (e) {
+      setBusy(false);
+      setError(`Deleted on Vercel, but clearing the local record failed: ${describeError(e)}`);
+      return;
+    }
+    setBusy(false);
+    onDone();
   };
 
   return (

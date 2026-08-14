@@ -63,6 +63,7 @@ pub fn run() {
             commands::db_claim_unowned_projects,
             commands::db_start_fresh_under,
             commands::forget_project,
+            commands::reset_project_remote,
             commands::db_upsert_account,
             commands::db_list_accounts,
             commands::db_insert_deployment,

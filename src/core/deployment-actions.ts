@@ -46,6 +46,42 @@ export function deleteRemoteProject(project: Project) {
   }, "Delete");
 }
 
+/**
+ * Which of these projects Vercel no longer has.
+ *
+ * Only a 404 counts. Every other failure — offline, rate-limited, an expired
+ * token, a 500 — leaves the project alone: the caller acts on this by
+ * deleting local history, so a flaky network must never be able to look like
+ * a deletion. The cost of missing one is that the app notices next time.
+ *
+ * Unlinked projects are skipped rather than reported: they have no remote to
+ * have lost.
+ */
+export async function findDeletedRemotes(projects: Project[]): Promise<Project[]> {
+  const token = await getAuthToken();
+  if (!token) return [];
+  const linked = projects.filter((p) => p.vercelProjectId !== null);
+  const gone: Project[] = [];
+  // Small batches: this runs against every linked project at once, and the
+  // rate limit it would otherwise walk into is shared with deploys.
+  for (let i = 0; i < linked.length; i += REMOTE_CHECK_CONCURRENCY) {
+    await Promise.all(
+      linked.slice(i, i + REMOTE_CHECK_CONCURRENCY).map(async (project) => {
+        const projectId = project.vercelProjectId;
+        if (!projectId) return;
+        try {
+          await api.run(api.getProject({ token, teamId: project.teamId }, projectId));
+        } catch (e) {
+          if (e instanceof VercelApiError && e.status === 404) gone.push(project);
+        }
+      }),
+    );
+  }
+  return gone;
+}
+
+const REMOTE_CHECK_CONCURRENCY = 4;
+
 /** Map a project's Git integration link to a repo slug for display. */
 export function linkToSlug(link: { type: string; org?: string; repo?: string } | null): string | null {
   if (!link || !link.org || !link.repo) return null;

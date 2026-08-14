@@ -61,6 +61,13 @@ export interface StartupHooks {
   readonly registerEventListeners: () => Promise<void>;
   readonly startConnectivity: () => Promise<void>;
   readonly drainHeldChanges: () => Promise<void>;
+  /**
+   * Ask Vercel which linked projects still exist. Fire-and-forget and last,
+   * like the update check: it is a request per linked project, nothing at
+   * launch depends on the answer, and it needs the identity `refreshAuth`
+   * went to fetch earlier in this sequence.
+   */
+  readonly verifyRemoteProjects: () => void;
   /** Forked with a delay — an update check must never be on the critical
    * path, and nothing at launch waits on it. */
   readonly scheduleUpdateCheck: () => void;
@@ -133,5 +140,6 @@ export async function runStartup(hooks: StartupHooks): Promise<void> {
   await step(hooks, "connectivity", () => hooks.startConnectivity());
   await step(hooks, "drain held changes", () => hooks.drainHeldChanges());
 
+  hooks.verifyRemoteProjects();
   hooks.scheduleUpdateCheck();
 }

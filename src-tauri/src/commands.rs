@@ -74,6 +74,28 @@ pub fn forget_project(app: AppHandle, db: State<'_, Db>, project_id: String) -> 
     Ok(())
 }
 
+/// Forget that a project was ever on Vercel: link, team, deployments, logs,
+/// domains and the snapshot of a page that no longer resolves. The project
+/// row and the folder stay — the user still has the files, and deploying
+/// again creates a fresh Vercel project.
+///
+/// Same shape as `forget_project`, and for the same reason: the frontend
+/// sequencing these halves is what leaves a card showing a live URL for a
+/// project that has been deleted.
+#[tauri::command(async)]
+pub fn reset_project_remote(app: AppHandle, db: State<'_, Db>, project_id: String) -> AppResult<()> {
+    db.reset_project_remote(&project_id)?;
+    if let Err(err) = crate::screenshot::delete_snapshot_file(&app, &project_id) {
+        crate::logger::log(
+            &app,
+            "WARN",
+            "db",
+            &format!("could not delete snapshot for {project_id}: {err}"),
+        );
+    }
+    Ok(())
+}
+
 // ---- accounts -------------------------------------------------------------
 
 db_command!(db_upsert_account(uid: String, username: String, avatar_url: Option<String>) -> ()

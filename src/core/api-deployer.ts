@@ -48,6 +48,13 @@ export interface ApiDeployerDeps {
       ownerId: string | null;
     },
   ) => void;
+  /**
+   * The deploy referenced a `vercelProjectId` that Vercel says does not
+   * exist — someone deleted the project. Optional because the deployer runs
+   * headless under test; when absent the deploy still fails with the same
+   * message, it just does not clean up.
+   */
+  onRemoteProjectMissing?: (projectName: string) => void;
   pollMs?: number;
   /** Overridable in tests — see `BUILD_TIMEOUT_MS_DEFAULT`. */
   buildTimeoutMs?: number;
@@ -166,6 +173,20 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
           Effect.catch((e: VercelApiError) => {
             const missing = missingShas(e);
             if (missing && round < 2) return Effect.succeed({ ok: false as const, missing });
+            // A 404 on create can only be the project we named: the token
+            // was good enough to be read (401/403 are their own statuses),
+            // and every other id in the body is ours. Retrying is pointless
+            // and the old message — a bare "Not Found" — read as the app
+            // being broken rather than the project being gone.
+            if (input.projectId && e.status === 404) {
+              deps.onRemoteProjectMissing?.(req.projectName);
+              return Effect.fail(
+                new DeployError({
+                  message: `${req.projectName} no longer exists on Vercel — it was deleted there. Its link and history have been cleared; deploy again to create it fresh.`,
+                  retryable: false,
+                }),
+              );
+            }
             return Effect.fail(fromApi(e));
           }),
         );

@@ -18,7 +18,7 @@ import {
   latestByProjectAtom,
   presentOnDiskAtom,
   projectsAtom,
-  reconcile,
+  rescan,
   setRoute,
   useAtomState,
 } from "../core/atoms";
@@ -141,7 +141,7 @@ export function CommandPalette({
         setRoute({ name: "settings" });
         return;
       case "rescan":
-        void reconcile(true);
+        void rescan();
         return;
       case "last-failed-log": {
         const failure = lastFailure(catalogInput);

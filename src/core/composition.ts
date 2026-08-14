@@ -30,6 +30,7 @@ import {
   type ClipboardShape,
   type TrayShape,
 } from "./effects";
+import { findDeletedRemotes } from "./deployment-actions";
 import { refreshGitInfo, type GitStatus } from "./git";
 import { make as heldChangesMake, HeldChangesService, type HoldReason } from "./held-changes";
 import { make as ipcMake, Ipc } from "./ipc";
@@ -207,6 +208,12 @@ const queueDeps: QueueDeps = {
     onLog: bufferLogLine,
     onCreated: (ourDeploymentId: string, info: RecordVercelIdsInfo) => {
       managedRuntime.runFork(Effect.andThen(ReadyEffects, (r) => r.recordVercelIds(ourDeploymentId, info)));
+    },
+    onRemoteProjectMissing: (projectName: string) => {
+      const project = Effect.runSync(SubscriptionRef.get(appStateShape.projects)).find(
+        (p) => p.name === projectName,
+      );
+      if (project) void forgetDeletedRemote(project);
     },
   }),
   accountSwitchPending: SubscriptionRef.get(accountSessionShape.state).pipe(
@@ -406,6 +413,72 @@ export async function purgeProject(projectId: string): Promise<void> {
   await refreshTray();
 }
 
+/**
+ * The Vercel side of a project is gone — deleted from this app, or on
+ * vercel.com. Put the project back to how it looked before it was ever
+ * deployed: no link, no team, no deployments, logs, domains or snapshot, and
+ * no `.vercel/project.json` on disk.
+ *
+ * That last file matters more than it looks: `reconciler.reconcile` re-links
+ * any project without a `vercelProjectId` from it, so leaving it behind means
+ * the next reconcile restores a link to a project that no longer exists.
+ *
+ * The queue entry goes first — a deploy already in flight is aimed at the
+ * project we are about to forget.
+ */
+export async function resetProjectRemote(project: {
+  id: string;
+  name: string;
+}): Promise<void> {
+  managedRuntime.runFork(Effect.andThen(DeployQueue, (q) => q.remove(project.id)));
+  await ipc.db.resetProjectRemote(project.id);
+  // Best-effort: a folder the user already deleted has no link file, and
+  // that is not a reason to leave the database half-reset.
+  await ipc.files.removeProjectLink(project.name).catch((e: unknown) => {
+    log.warn("projects", `could not remove the link file for ${project.name}: ${describeError(e)}`);
+  });
+  await reloadProjects();
+  await refreshTray();
+}
+
+/**
+ * Ask Vercel which linked projects still exist, and reset the ones that do
+ * not. Deliberately not on the fs-change path: it is one request per linked
+ * project, so it runs at launch and on a manual rescan, where the user is
+ * asking the app to go and look.
+ */
+export async function verifyRemoteProjects(): Promise<void> {
+  const projects = Effect.runSync(SubscriptionRef.get(appStateShape.projects));
+  const linked = projects.filter((p) => p.vercelProjectId !== null).length;
+  const gone = await findDeletedRemotes(projects).catch((e: unknown) => {
+    log.warn("projects", `could not check projects against Vercel: ${describeError(e)}`);
+    return [];
+  });
+  // Logged either way: "nothing happened" is the answer to "why is this
+  // project still showing a URL for something I deleted?", and without a
+  // line here that question has nowhere to start.
+  log.info("projects", `checked ${linked} linked project(s) against Vercel: ${gone.length} gone`);
+  for (const project of gone) await forgetDeletedRemote(project);
+}
+
+/** The manual "Rescan Folder": the folder is the truth about what exists
+ * locally, Vercel is the truth about what exists remotely, and a refresh the
+ * user asked for should reconcile against both. */
+export async function rescan(): Promise<void> {
+  await reconcile(true);
+  await verifyRemoteProjects();
+}
+
+/**
+ * Same cleanup, for a deletion the user did not do here: say so, since the
+ * card is about to lose its URL and its history without them touching it.
+ */
+export async function forgetDeletedRemote(project: { id: string; name: string }): Promise<void> {
+  await resetProjectRemote(project);
+  log.warn("projects", `${project.name} no longer exists on Vercel — cleared its link and history`);
+  notify("Project deleted on Vercel", `${project.name} is gone from Vercel. Deploy again to recreate it.`);
+}
+
 /** Pull the account cache out of SQLite into the store. Signing in is the
  * only thing that changes it, so it is refreshed there rather than polled. */
 export async function refreshAccounts(): Promise<void> {
@@ -574,6 +647,9 @@ const startupHooks: StartupHooks = {
   startConnectivity: () =>
     managedRuntime.runPromise(Effect.andThen(Connectivity, (c) => c.start)),
   drainHeldChanges: () => drainPersistedDirty(),
+  verifyRemoteProjects: () => {
+    void verifyRemoteProjects();
+  },
   scheduleUpdateCheck: () => {
     managedRuntime.runFork(
       Effect.andThen(Updater, (u) => u.check).pipe(Effect.delay("4 seconds")),

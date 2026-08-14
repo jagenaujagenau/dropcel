@@ -380,6 +380,29 @@ impl Db {
         Ok(())
     }
 
+    /// Undo everything that ties a project to a Vercel project: the link,
+    /// the team scope, and every record that only existed because the remote
+    /// did — deployments (logs cascade), domains. The row, the folder and the
+    /// project's own settings stay, so it reads as a local project that has
+    /// never been deployed.
+    ///
+    /// One statement per table inside a transaction: a half-reset project —
+    /// unlinked but still showing a live deployment — is exactly the state
+    /// this exists to get out of.
+    pub fn reset_project_remote(&self, id: &str) -> AppResult<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE projects SET vercel_project_id = NULL, team_id = NULL, updated_at = ?2
+             WHERE id = ?1",
+            params![id, now()],
+        )?;
+        tx.execute("DELETE FROM deployments WHERE project_id = ?1", params![id])?;
+        tx.execute("DELETE FROM project_domains WHERE project_id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn insert_deployment(
         &self,
         project_id: &str,
@@ -711,6 +734,37 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resetting_the_remote_keeps_the_project_and_drops_everything_vercel() {
+        let db = open_in_memory().unwrap();
+        let p = db.upsert_project("blog", "/tmp/Vercel/blog", "astro").unwrap();
+        let other = db.upsert_project("shop", "/tmp/Vercel/shop", "astro").unwrap();
+        db.set_project_link(&p.id, Some("prj_1")).unwrap();
+        db.set_project_team(&p.id, Some("team_1")).unwrap();
+        db.set_auto_deploy(&p.id, false).unwrap();
+        let d = db.insert_deployment(&p.id, "production", None, None).unwrap();
+        db.append_logs(&d.id, &[("stdout".into(), "building".into())]).unwrap();
+        db.add_domain(&p.id, "blog.example", true).unwrap();
+        // A second project's records must survive untouched.
+        db.set_project_link(&other.id, Some("prj_2")).unwrap();
+        db.insert_deployment(&other.id, "production", None, None).unwrap();
+
+        db.reset_project_remote(&p.id).unwrap();
+
+        let reset = db.list_projects().unwrap().into_iter().find(|x| x.id == p.id).unwrap();
+        assert_eq!(reset.vercel_project_id, None);
+        assert_eq!(reset.team_id, None);
+        // Settings that are about the folder, not the remote, are left alone.
+        assert!(!reset.auto_deploy);
+        assert!(db.list_deployments(&p.id, 10).unwrap().is_empty());
+        assert!(db.get_logs(&d.id, None).unwrap().is_empty());
+        assert!(db.list_domains(&p.id).unwrap().is_empty());
+
+        let untouched = db.list_projects().unwrap().into_iter().find(|x| x.id == other.id).unwrap();
+        assert_eq!(untouched.vercel_project_id.as_deref(), Some("prj_2"));
+        assert_eq!(db.list_deployments(&other.id, 10).unwrap().len(), 1);
+    }
 
     #[test]
     fn interrupted_deployments_are_canceled_at_startup() {
