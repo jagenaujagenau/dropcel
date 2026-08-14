@@ -1,16 +1,37 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "plugins": ["typescript", "import", "oxc", "eslint", "unicorn", "react", "react-hooks"],
-  "jsPlugins": ["./oxlint-plugin-dropcel/index.ts"],
+  "jsPlugins": ["./oxlint-plugin-dropcel/index.ts", "./oxlint-plugin-anti-slop/index.ts"],
   "categories": {
     "correctness": "error",
     "suspicious": "error",
     "perf": "error"
   },
-  "ignorePatterns": ["src-tauri/**", "dist/**", "tmp/**", "oxlint-plugin-dropcel/**/*.test.ts"],
+  "ignorePatterns": [
+    "src-tauri/**",
+    "dist/**",
+    "tmp/**",
+    "oxlint-plugin-dropcel/**/*.test.ts"
+  ],
   "rules": {
     "dropcel/no-inline-schema-compile": "error",
     "dropcel/no-manual-effect-runtime-in-tests": "error",
+
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "error",
+    "anti-slop/no-shape-in-symbol-names": "off",
+    "anti-slop/no-unknown-parameters": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
 
     "typescript/consistent-type-imports": ["error", { "fixStyle": "inline-type-imports" }],
     "typescript/no-import-type-side-effects": "error",
@@ -65,6 +86,20 @@
       "files": ["**/*.test.ts", "oxlint-plugin-dropcel/**"],
       "rules": {
         "eslint/no-console": "off"
+      }
+    },
+    {
+      "files": ["oxlint-plugin-dropcel/**", "oxlint-plugin-anti-slop/**"],
+      "rules": {
+        "anti-slop/no-unknown-parameters": "off",
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/require-safety-comment-for-type-assertion": "off"
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "anti-slop/no-module-mocking": "off"
       }
     }
   ]
