@@ -23,6 +23,24 @@ pub fn init(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let database = db::open(&data_dir.join("vercel-folder.db"))?;
 
+    // Before anything reads deployments: a row still in flight belongs to a
+    // process that is gone, so it would otherwise spin forever.
+    match database.cancel_interrupted_deployments() {
+        Ok(0) => {}
+        Ok(n) => logger::log(
+            app.handle(),
+            "warn",
+            "startup",
+            &format!("canceled {n} deployment(s) interrupted by a previous exit"),
+        ),
+        Err(e) => logger::log(
+            app.handle(),
+            "error",
+            "startup",
+            &format!("could not reconcile interrupted deployments: {e}"),
+        ),
+    }
+
     // Root folder: persisted setting, falling back to ~/Vercel.
     let root = database
         .get_setting("root_folder")?

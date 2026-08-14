@@ -454,6 +454,25 @@ impl Db {
         Ok(dep)
     }
 
+    /// Close out deployments left in flight by a previous process.
+    ///
+    /// Nothing in flight survives a quit or a crash, so at startup any row
+    /// with no `finished_at` is an orphan that can never make progress. Left
+    /// alone it keeps reading as "deploying" — pinning the project card and
+    /// the tray icon to a spinner across every future launch. Marked canceled
+    /// with the same bookkeeping a real terminal transition does.
+    pub fn cancel_interrupted_deployments(&self) -> AppResult<usize> {
+        let n = self.conn().execute(
+            "UPDATE deployments SET state = 'canceled',
+                error = COALESCE(error, 'interrupted — the app exited while this deployment was running'),
+                finished_at = ?1,
+                duration_ms = CAST((julianday(?1) - julianday(started_at)) * 86400000 AS INTEGER)
+             WHERE finished_at IS NULL",
+            params![now()],
+        )?;
+        Ok(n)
+    }
+
     /// Record the resolved public URL after a deployment is ready, without
     /// touching the deployment URL or finished_at/duration.
     pub fn set_deployment_public_url(&self, id: &str, public_url: &str) -> AppResult<()> {
@@ -692,6 +711,30 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interrupted_deployments_are_canceled_at_startup() {
+        let db = open_in_memory().unwrap();
+        let p = db.upsert_project("blog", "/tmp/Vercel/blog", "astro").unwrap();
+        let orphan = db.insert_deployment(&p.id, "production", None, None).unwrap();
+        let done = db.insert_deployment(&p.id, "production", None, None).unwrap();
+        db.update_deployment(&done.id, "ready", Some("https://x"), None, Some(0)).unwrap();
+
+        assert_eq!(db.cancel_interrupted_deployments().unwrap(), 1);
+
+        let rows = db.list_deployments(&p.id, 10).unwrap();
+        let orphan = rows.iter().find(|d| d.id == orphan.id).unwrap();
+        assert_eq!(orphan.state, "canceled");
+        assert!(orphan.finished_at.is_some());
+        assert!(orphan.error.as_deref().unwrap_or_default().contains("interrupted"));
+        // A finished deployment is left exactly as it was.
+        let done = rows.iter().find(|d| d.id == done.id).unwrap();
+        assert_eq!(done.state, "ready");
+        assert!(done.error.is_none());
+
+        // Idempotent: a second startup has nothing left to close.
+        assert_eq!(db.cancel_interrupted_deployments().unwrap(), 0);
+    }
 
     #[test]
     fn migrations_and_crud_roundtrip() {
