@@ -424,6 +424,11 @@ export const make = (deps: AccountSessionDeps) =>
       getToken,
       acquireToken,
       refreshIdentity,
+      // SAFETY: the interface promises an effect that cannot fail, and
+      // resolveSwitch's body honours that — `getToken` has no error channel
+      // and every other yield converts its failures (Effect.ignore,
+      // Effect.catch, Effect.orDie). The assertion drops channels that are
+      // uninhabited rather than unchecked.
       resolveSwitch: (mode) => resolveSwitch(mode) as Effect.Effect<void>,
     });
   });

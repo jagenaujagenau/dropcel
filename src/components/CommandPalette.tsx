@@ -48,7 +48,7 @@ import { cn } from "../lib/utils";
  * navigation, and the side effects each command kind performs.
  */
 
-const ICONS: Record<CommandKind, React.ReactNode> = {
+const ICONS = {
   visit: <ExternalLink className="h-3.5 w-3.5" />,
   "copy-url": <LinkIcon className="h-3.5 w-3.5" />,
   redeploy: <Rocket className="h-3.5 w-3.5" />,
@@ -59,7 +59,7 @@ const ICONS: Record<CommandKind, React.ReactNode> = {
   settings: <SettingsIcon className="h-3.5 w-3.5" />,
   rescan: <RefreshCw className="h-3.5 w-3.5" />,
   "last-failed-log": <FileText className="h-3.5 w-3.5" />,
-};
+} satisfies Record<CommandKind, React.ReactNode>;
 
 export function CommandPalette({
   open,

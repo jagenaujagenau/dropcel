@@ -49,6 +49,10 @@ function makeHarness(): Harness {
   const notifyChangeCalls: string[] = [];
   let gitOperation: string | null = "rebase";
 
+  // SAFETY: a partial stand-in for the Tauri command surface — only the
+  // groups these tests exercise are populated. Each group is wrapped
+  // independently, so a method left out is absent at call time rather than
+  // silently wrong.
   const fakeRaw = {
     db: {},
     fs: {},

@@ -43,7 +43,7 @@ import {
   useAtomState,
   watchPausedAtom,
 } from "../core/atoms";
-import { FRAMEWORK_LABELS, type Framework, type Project } from "../core/types";
+import { frameworkLabel, type Project } from "../core/types";
 import type { UpdateStatus } from "../core/updater";
 import * as ipc from "../lib/ipc";
 import type { Theme } from "../lib/theme";
@@ -84,7 +84,7 @@ function GhostRow({ project: p }: { project: Project }) {
       <div className="min-w-0 flex-1">
         <p className="truncate">{p.name}</p>
         <p className="text-[11px] text-faint">
-          {FRAMEWORK_LABELS[p.framework as Framework] ?? p.framework}
+          {frameworkLabel(p.framework)}
           {latest ? ` · last deployed ${timeAgo(latest.startedAt)}` : " · never deployed"}
         </p>
       </div>

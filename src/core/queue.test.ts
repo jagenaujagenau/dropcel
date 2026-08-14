@@ -122,6 +122,10 @@ const makeHarness = (
   const autoDeploy = options.autoDeploy ?? true;
 
   let seq = 0;
+  // SAFETY: a partial stand-in for the Tauri command surface — only the
+  // groups these tests exercise are populated. Each group is wrapped
+  // independently, so a method left out is absent at call time rather than
+  // silently wrong.
   const fakeRaw = {
     db: {
       insertDeployment: (projectId: string) =>

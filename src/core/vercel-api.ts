@@ -67,6 +67,11 @@ export function parseRetryAfter(header: string | undefined, now: number = Date.n
 // Tauri's fetch is fetch-compatible; hand it to the Effect platform layer.
 const HttpLive = FetchHttpClient.layer.pipe(
   Layer.provide(
+    // SAFETY: tauriFetch implements the WHATWG fetch contract — the platform
+    // layer only ever calls it as `(input, init) => Promise<Response>`. The
+    // two types differ nominally (plugin-http declares its own Request/
+    // Response overloads), not structurally, which is why one step through
+    // `unknown` is needed to relate them at all.
     Layer.succeed(FetchHttpClient.Fetch, tauriFetch as unknown as typeof globalThis.fetch),
   ),
 );
@@ -142,6 +147,11 @@ function request(
       }
     }
     if (res.status >= 400) {
+      // SAFETY: `json` is whatever JSON.parse returned, or null when the body
+      // was absent or unparseable (see above). Vercel documents errors as
+      // `{ error: { code, message } }`; every read below is optional-chained
+      // with a fallback, so a body of another shape degrades to the generic
+      // status message rather than throwing.
       const err = (json as VercelErrorBody)?.error;
       return yield* new VercelApiError({
         status: res.status,
@@ -181,6 +191,10 @@ export interface OAuthTokens {
 /** Pure: interpret a token-endpoint response. */
 export function parseTokenResponse(json: unknown, nowMs: number): OAuthTokens | null {
   if (typeof json !== "object" || json === null) return null;
+  // SAFETY: guarded to a non-null object immediately above. Every field is
+  // declared optional and checked before use — `access_token` gates the
+  // return, and the other two fall back — so a response missing or renaming
+  // any of them yields null rather than a malformed token.
   const t = json as {
     access_token?: string;
     refresh_token?: string;
@@ -211,6 +225,10 @@ const discoverOpenId = Effect.gen(function* () {
     .execute(HttpClientRequest.get(OPENID_CONFIG_URL))
     .pipe(Effect.mapError((e) => oauthError(`OpenID discovery failed: ${e.message}`)));
   const text = yield* res.text.pipe(Effect.mapError((e) => oauthError(String(e))));
+  // SAFETY: the response is Vercel's OpenID discovery document, whose
+  // endpoint fields are required by RFC 8414 §3.2. A malformed document
+  // leaves the URLs undefined and the subsequent request fails as a normal
+  // OAuth error — this cast cannot itself throw, JSON.parse already did.
   openIdCache = JSON.parse(text) as OpenIdConfig;
   return openIdCache;
 }).pipe(Effect.scoped);
@@ -229,6 +247,9 @@ const formPost = (endpoint: string, params: Record<string, string>) =>
       )
       .pipe(Effect.mapError((e) => oauthError(`request failed: ${e.message}`)));
     const text = yield* res.text.pipe(Effect.mapError((e) => oauthError(String(e))));
+    // SAFETY: widening, not narrowing — JSON.parse returns `any`, and naming
+    // it `unknown` forces every caller to interpret the body explicitly
+    // instead of inheriting `any` through the return type.
     return { status: res.status, json: (text ? JSON.parse(text) : null) as unknown };
   }).pipe(Effect.scoped);
 
@@ -246,6 +267,9 @@ export interface DeviceAuthorization {
 /** Pure: interpret a device-authorization response (RFC 8628 §3.2). */
 export function parseDeviceAuthorization(json: unknown): DeviceAuthorization | null {
   if (typeof json !== "object" || json === null) return null;
+  // SAFETY: guarded to a non-null object immediately above, and every field
+  // below is optional with a required-field check before the value is
+  // returned, so an unexpected body yields null.
   const d = json as {
     device_code?: string;
     user_code?: string;
@@ -274,6 +298,9 @@ export type DevicePollResult =
 export function parseDevicePoll(json: unknown, nowMs: number): DevicePollResult {
   const tokens = parseTokenResponse(json, nowMs);
   if (tokens) return { status: "ok", tokens };
+  // SAFETY: RFC 8628 §3.5 gives failures as `{ error: "..." }`. The union
+  // with null and the optional chain cover a body that is neither, which
+  // falls through to the unknown-error branch below.
   const err = (json as { error?: string } | null)?.error;
   if (err === "authorization_pending") return { status: "pending" };
   if (err === "slow_down") return { status: "slow_down" };
@@ -340,6 +367,10 @@ export interface ApiUser {
 export const getUser = (auth: VercelAuth) =>
   request(auth, "GET", "/v2/user").pipe(
     Effect.map((j) => {
+      // SAFETY: `request` returns the parsed 2xx body, and /v2/user answers
+      // with the documented user object. Both spellings of the id and the
+      // avatar are optional here and normalised below, so a field Vercel
+      // renames surfaces as an empty string rather than a crash.
       const u = (
         j as {
           user: {
@@ -370,6 +401,9 @@ export interface ApiTeam {
 
 export const listTeams = (auth: VercelAuth) =>
   request(auth, "GET", "/v2/teams").pipe(
+    // SAFETY: /v2/teams answers `{ teams: [...] }`; the optional field plus
+    // the `?? []` fallback make a missing or renamed key read as "no teams",
+    // which is also the correct answer for a personal-only account.
     Effect.map((j) => ((j as { teams?: ApiTeam[] }).teams ?? []).map((t) => ({ id: t.id, slug: t.slug }))),
   );
 
@@ -383,6 +417,9 @@ export interface ApiProject {
 export const getProject = (auth: VercelAuth, idOrName: string) =>
   request(auth, "GET", `/v9/projects/${encodeURIComponent(idOrName)}`).pipe(
     Effect.map((j) => {
+      // SAFETY: a 2xx from /v9/projects/:id is that project; id, name and
+      // accountId are required by the API and every caller treats absence as
+      // a bug, not a case to handle. `link` is optional and defaulted below.
       const p = j as { id: string; name: string; accountId: string; link?: ApiProject["link"] };
       return { id: p.id, name: p.name, accountId: p.accountId, link: p.link ?? null } satisfies ApiProject;
     }),
@@ -406,6 +443,10 @@ export interface ApiDeployment {
 }
 
 function toDeployment(j: unknown): ApiDeployment {
+  // SAFETY: the sole caller passes a 2xx deployment body from the REST API.
+  // Only `id` is treated as required — it is the resource's own key, present
+  // on every deployment representation Vercel returns — and every other
+  // field is optional with a fallback in the object built below.
   const d = j as {
     id: string;
     url?: string;
@@ -473,6 +514,10 @@ export const createDeployment = (auth: VercelAuth, input: CreateDeploymentInput)
 /** Shas Vercel reported missing on a failed create, or null if other error. */
 export function missingShas(e: VercelApiError): string[] | null {
   if (e.code !== "missing_files") return null;
+  // SAFETY: reached only for the `missing_files` error, whose detail Vercel
+  // documents as `{ missing: [sha, ...] }`. The optional field and the `??`
+  // below turn any other detail into an empty list, which the upload retry
+  // reads as "nothing left to send".
   const detail = e.detail as { missing?: string[] } | null;
   return detail?.missing ?? [];
 }
@@ -494,16 +539,19 @@ export interface BuildEvent {
 
 export const getDeploymentEvents = (auth: VercelAuth, deploymentId: string, since?: number) =>
   request(auth, "GET", `/v3/deployments/${deploymentId}/events`, {
-    query: {
-      builds: "1",
-      limit: "200",
-      ...(since ? { since: String(since) } : {}),
-    },
+    query: since
+      ? { builds: "1", limit: "200", since: String(since) }
+      : { builds: "1", limit: "200" },
   }).pipe(
     Effect.map((j) => {
       const events = Array.isArray(j) ? j : [];
       return events
         .map((e) => {
+          // SAFETY: `events` is the array branch of the response, guarded
+          // above. Build events carry text in either `payload.text` or a
+          // top-level `text` depending on their type, so both are optional
+          // and defaulted — an event of an unknown shape becomes an empty
+          // log line rather than a thrown read.
           const ev = e as { created?: number; type?: string; payload?: { text?: string }; text?: string };
           return {
             created: ev.created ?? 0,
@@ -527,6 +575,9 @@ export interface ApiProjectDomain {
 }
 
 const toProjectDomain = (j: unknown): ApiProjectDomain => {
+  // SAFETY: called only on entries of a 2xx domains response, where `name`
+  // is the resource key. Verification state is optional across API versions
+  // and is defaulted below to the pessimistic "not verified".
   const d = j as {
     name: string;
     verified?: boolean;
@@ -553,6 +604,9 @@ export const removeProjectDomain = (auth: VercelAuth, projectId: string, domain:
 /** misconfigured = DNS not yet pointing at Vercel. */
 export const getDomainConfig = (auth: VercelAuth, domain: string) =>
   request(auth, "GET", `/v6/domains/${encodeURIComponent(domain)}/config`).pipe(
+    // SAFETY: the field is optional and defaults to `true` — if Vercel stops
+    // sending it we report the domain as misconfigured, which shows setup
+    // instructions rather than falsely claiming DNS is ready.
     Effect.map((j) => ({ misconfigured: (j as { misconfigured?: boolean }).misconfigured ?? true })),
   );
 

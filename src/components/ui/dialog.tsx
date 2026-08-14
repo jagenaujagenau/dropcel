@@ -33,7 +33,8 @@ export function Dialog({ open, onClose, title, description, children, className 
    */
   useEffect(() => {
     if (!open) return;
-    const opener = document.activeElement as HTMLElement | null;
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement ? active : null;
     // Defer to autoFocus inside the panel when there is one; otherwise focus
     // the panel itself so screen readers announce the dialog.
     if (!panelRef.current?.contains(document.activeElement)) {

@@ -70,11 +70,19 @@ function makeHarness(overrides: { db?: Partial<Record<string, unknown>> } = {}):
   const notifications: { title: string; body: string }[] = [];
   const clipboardWrites: string[] = [];
 
+  // SAFETY: a partial stand-in for the Tauri command surface — only the
+  // groups these tests exercise are populated. Each group is wrapped
+  // independently, so a method left out is absent at call time rather than
+  // silently wrong.
   const fakeRaw = {
     db: {
       updateDeployment: (id: string, state: string, url: string | null) =>
         Promise.resolve(
-          makeDeployment({ id, projectId: "p1", state: state as never, url }),
+          // SAFETY: the IPC boundary types `state` as a plain string, but
+          // every value reaching this fake came from the caller under test,
+          // which only ever emits DeploymentState members. Echoing it back
+          // unchanged is the whole point of the fake.
+          makeDeployment({ id, projectId: "p1", state: state as Deployment["state"], url }),
         ),
       getSetting: (_key: string) => Promise.resolve(null),
       setSetting: () => Promise.resolve(),

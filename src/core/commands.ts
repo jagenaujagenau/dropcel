@@ -102,6 +102,10 @@ function commandsForProject(
     const spec: CommandSpec = {
       ...base,
       id: `${project.id}:${action.kind}`,
+      // SAFETY: `available` is filtered to palette actions, whose kinds are
+      // exactly the project-scoped members of CommandKind — PALETTE_ORDER
+      // above lists the same six. ProjectActionKind is the wider union
+      // because it also names the actions that never reach the palette.
       kind: action.kind as CommandKind,
       label: action.label,
     };

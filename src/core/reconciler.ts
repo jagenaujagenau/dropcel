@@ -70,7 +70,7 @@ export class Reconciler {
   async reconcile(deployNew = false): Promise<void> {
     // Loose .html files copied straight into the root become projects first,
     // so this same pass registers and deploys them.
-    const adopted = await this.deps.adoptLooseFiles().catch(() => [] as string[]);
+    const adopted = await this.deps.adoptLooseFiles().catch((): string[] => []);
     if (adopted.length > 0) {
       log.info("import", `adopted loose files as projects: ${adopted.join(", ")}`);
     }

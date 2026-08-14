@@ -95,7 +95,7 @@ export interface LogLine {
   line: string;
 }
 
-export const FRAMEWORK_LABELS: Record<Framework, string> = {
+export const FRAMEWORK_LABELS = {
   nextjs: "Next.js",
   nuxt: "Nuxt",
   astro: "Astro",
@@ -108,4 +108,21 @@ export const FRAMEWORK_LABELS: Record<Framework, string> = {
   express: "Express",
   static: "Static HTML",
   unknown: "Unknown",
-};
+} satisfies Record<Framework, string>;
+
+/**
+ * Narrow a framework slug that came back from SQLite. Rows written by an
+ * older build can hold a slug this version no longer knows, so an
+ * unrecognised value becomes "unknown" instead of being taken at its word.
+ */
+export function toFramework(value: string): Framework {
+  // SAFETY: FRAMEWORK_LABELS is keyed by exactly the Framework union — the
+  // `satisfies` above is what enforces that — so membership in it is a
+  // runtime proof that `value` is one of the union's members.
+  return value in FRAMEWORK_LABELS ? (value as Framework) : "unknown";
+}
+
+/** The display label for a slug, falling back to the slug itself. */
+export function frameworkLabel(value: string): string {
+  return value in FRAMEWORK_LABELS ? FRAMEWORK_LABELS[toFramework(value)] : value;
+}

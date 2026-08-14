@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   importDroppedPath: vi.fn(),
   takePendingDrops: vi.fn(),
   /** The window drag-drop callback registered by DropZone. */
+  // SAFETY: widening, not narrowing — the field starts empty and the mocked
+  // webview below assigns the real callback when DropZone registers it.
   onDrop: null as null | ((payload: unknown) => void),
 }));
 

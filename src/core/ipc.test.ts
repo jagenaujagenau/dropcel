@@ -47,13 +47,17 @@ describe("decodeIpcError", () => {
   });
 });
 
-const fakeRaw = (overrides: Partial<Record<string, unknown>> = {}): RawIpc =>
+const fakeRaw = (overrides: { db?: Record<string, unknown> } = {}): RawIpc =>
+  // SAFETY: a partial stand-in for the Tauri command surface — only the
+  // groups these tests call are populated. `effectify` walks each group's
+  // own entries, so a method left out is simply absent at call time rather
+  // than silently wrong.
   ({
     db: {
       listProjects: () => Promise.resolve([{ id: "p1" }]),
       getSetting: (key: string) => Promise.resolve(`value:${key}`),
       setSetting: () => Promise.reject({ kind: "db", message: "readonly" }),
-      ...(overrides.db as object),
+      ...overrides.db,
     },
     fs: {
       trashProject: () => Promise.reject({ kind: "not-found", message: "gone" }),

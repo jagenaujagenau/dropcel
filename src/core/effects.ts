@@ -177,6 +177,11 @@ export const makeConnectivity = Effect.fn("Connectivity.make")(function* (
     yield* Deferred.succeed(firstProbe, undefined);
   });
 
+  const probeNow: ConnectivitySignal = "probe-now";
+  // SAFETY: the `while (true)` below never breaks and the generator has no
+  // reachable return, so this effect only ever ends by interruption or
+  // failure — which is what `Effect<never>` claims. TypeScript infers `void`
+  // because it cannot see that the loop is non-terminating.
   const run = Effect.gen(function* () {
     while (true) {
       yield* probeOnce;
@@ -188,7 +193,7 @@ export const makeConnectivity = Effect.fn("Connectivity.make")(function* (
       while (waiting) {
         const interval = (yield* SubscriptionRef.get(online)) ? onlineMs : offlineMs;
         const signal = yield* Effect.raceFirst(
-          Effect.as(Effect.sleep(interval), "probe-now" as ConnectivitySignal),
+          Effect.as(Effect.sleep(interval), probeNow),
           Queue.take(signals),
         );
         if (signal === "probe-now") waiting = false;

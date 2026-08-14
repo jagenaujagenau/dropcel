@@ -26,7 +26,7 @@ import { cn } from "../lib/utils";
  * one would fail another. Flattened, they all sit on the brand gradient the
  * same way — which is also what the design calls for.
  */
-const LOGOS: Record<Framework, string> = {
+const LOGOS = {
   nextjs: nextLogo,
   nuxt: nuxtLogo,
   astro: astroLogo,
@@ -41,7 +41,7 @@ const LOGOS: Record<Framework, string> = {
   // than a monogram — there is no "static" brand to represent.
   static: otherLogo,
   unknown: otherLogo,
-};
+} satisfies Record<Framework, string>;
 
 export function FrameworkLogo({
   framework,

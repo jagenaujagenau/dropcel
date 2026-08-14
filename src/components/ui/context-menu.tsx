@@ -59,7 +59,8 @@ export function ContextMenu({
    * to tab from the top of the page.
    */
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement ? active : null;
     ref.current?.focus();
     return () => opener?.focus?.();
   }, []);

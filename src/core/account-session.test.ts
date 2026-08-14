@@ -48,22 +48,27 @@ interface Harness {
 const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
   Effect.gen(function* () {
     const counters = { refresh: 0, import: 0, fresh: 0, reloads: 0, resolved: 0 };
-    const h = {
+    // The Harness annotation is what types the empty collections below; the
+    // fakes handed to `make` then read and write them through `h`.
+    const h: Harness = {
+      // SAFETY: the session is built from these very fakes, so it cannot
+      // exist yet. It is assigned immediately below, before `makeHarness`
+      // returns and therefore before any test can observe the field.
       session: undefined as unknown as AccountSessionShape,
-      settings: {} as Record<string, string>,
+      settings: {},
       refreshCalls: () => counters.refresh,
       importCalls: () => counters.import,
-      authedAs: [] as (string | null)[],
-      notifications: [] as string[],
-      switches: [] as { from: string; to: string }[],
-      freshUnder: [] as (string | null)[],
-      cleared: { file: [] } as Harness["cleared"],
-      remembered: [] as { uid: string; username: string }[],
-      claimedFor: [] as string[],
+      authedAs: [],
+      notifications: [],
+      switches: [],
+      freshUnder: [],
+      cleared: { file: [] },
+      remembered: [],
+      claimedFor: [],
       freshStarts: () => counters.fresh,
       reloads: () => counters.reloads,
       resolved: () => counters.resolved,
-      accountSwitch: null as { from: string; to: string } | null,
+      accountSwitch: null,
     };
     h.session = yield* make({
       getStoredToken: Effect.sync(() => "stored-token"),
@@ -105,7 +110,7 @@ const makeHarness = (overrides: Partial<AccountSessionDeps> = {}) =>
       onSwitchResolved: () => void (counters.resolved += 1),
       ...overrides,
     });
-    return h as Harness;
+    return h;
   });
 
 describe("AccountSession.getToken", () => {
@@ -148,7 +153,7 @@ describe("AccountSession.getToken", () => {
         refreshViaOAuth: Effect.gen(function* () {
           refreshCalls += 1;
           yield* Deferred.await(gate);
-          return { ok: true, token: "refreshed-token" } as RefreshOutcome;
+          return { ok: true, token: "refreshed-token" } satisfies RefreshOutcome;
         }),
       });
       const a = yield* Effect.forkChild(h.session.getToken);
@@ -196,6 +201,9 @@ describe("AccountSession.acquireToken (typed failures)", () => {
       const h = yield* makeHarness({ getExpiresAt: Effect.sync(() => NOW - 1) });
       const err = yield* Effect.flip(h.session.acquireToken);
       expect(err).toBeInstanceOf(TokenExpired);
+      // SAFETY: the assertion above proves the instance; the flip channel is
+      // the union of every failure acquireToken can raise, and only this
+      // member carries `staleToken`.
       expect((err as TokenExpired).staleToken).toBe("stored-token");
     }),
   );
@@ -211,6 +219,8 @@ describe("AccountSession.acquireToken (typed failures)", () => {
       });
       const err = yield* Effect.flip(h.session.acquireToken);
       expect(err).toBeInstanceOf(TokenRevoked);
+      // SAFETY: proven by the instanceof assertion above; `staleToken` is
+      // this member's own field, not the union's.
       expect((err as TokenRevoked).staleToken).toBe("stored-token");
     }),
   );

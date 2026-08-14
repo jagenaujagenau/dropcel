@@ -51,11 +51,13 @@ afterEach(() => {
 });
 
 /** Walk from Welcome to the Connect step and reveal the paste field. */
-function openTokenField() {
+function openTokenField(): HTMLInputElement {
   render(<Onboarding onDone={vi.fn()} />);
   fireEvent.click(screen.getByText("Get Started"));
   fireEvent.click(screen.getByText("Paste an access token instead"));
-  return screen.getByPlaceholderText(/Vercel access token/);
+  const input = screen.getByPlaceholderText(/Vercel access token/);
+  if (!(input instanceof HTMLInputElement)) throw new Error("token field is not an <input>");
+  return input;
 }
 
 describe("Onboarding — token fallback", () => {
@@ -70,7 +72,7 @@ describe("Onboarding — token fallback", () => {
     });
     expect(screen.getByText(/keychain is locked/)).toBeTruthy();
     // The token stays in the field so the attempt isn't lost.
-    expect((input as HTMLInputElement).value).toBe("tok_123");
+    expect(input.value).toBe("tok_123");
   });
 
   it("clears the field and raises no error when the save succeeds", async () => {
@@ -81,7 +83,7 @@ describe("Onboarding — token fallback", () => {
 
     await waitFor(() => expect(mocks.refreshAuth).toHaveBeenCalled());
     expect(screen.queryByText(/Could not save the token/)).toBeNull();
-    expect((input as HTMLInputElement).value).toBe("");
+    expect(input.value).toBe("");
   });
 
   it("does not leave a stale error visible on a later successful save", async () => {

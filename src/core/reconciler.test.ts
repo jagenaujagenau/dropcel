@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import type { ScannedProject } from "../lib/ipc";
 import { layerFrom, type RawIpc } from "./ipc";
 import { make, Reconciler, type ReconcilerDeps } from "./reconciler";
-import type { Project } from "./types";
+import { toFramework, type Project } from "./types";
 
 /**
  * Tests for the reconciler's decision logic against a fake filesystem and
@@ -48,6 +48,9 @@ interface Harness {
 function makeHarness(overrides: Partial<ReconcilerDeps> = {}): Harness {
   const state: Harness["state"] = { scanned: [], db: [], files: {} };
   const h: Harness = {
+    // SAFETY: the reconciler is built from fakes that close over `h`, so it
+    // cannot exist yet. It is assigned a few lines below, before the harness
+    // is handed to any test.
     reconciler: undefined as unknown as Reconciler,
     state,
     storeProjects: [],
@@ -71,14 +74,14 @@ function makeHarness(overrides: Partial<ReconcilerDeps> = {}): Harness {
     upsertProject: async (name, path, framework) => {
       const existing = state.db.find((p) => p.name === name);
       if (existing) {
-        existing.framework = framework as Project["framework"];
+        existing.framework = toFramework(framework);
         return { ...existing };
       }
       const project = makeProject({
         id: `id-${++seq}`,
         name,
         path,
-        framework: framework as Project["framework"],
+        framework: toFramework(framework),
       });
       state.db.push(project);
       return { ...project };
@@ -97,7 +100,7 @@ function makeHarness(overrides: Partial<ReconcilerDeps> = {}): Harness {
     },
     setProjectFramework: async (id, framework) => {
       const p = state.db.find((x) => x.id === id);
-      if (p) p.framework = framework as Project["framework"];
+      if (p) p.framework = toFramework(framework);
     },
     setProjects: (projects) => {
       h.storeProjects = projects;
@@ -259,7 +262,7 @@ describe("ReconcilerService", () => {
             id: `id-${++seq}`,
             name,
             path,
-            framework: framework as Project["framework"],
+            framework: toFramework(framework),
           });
           db.push(project);
           return { ...project };
@@ -297,6 +300,10 @@ describe("ReconcilerService", () => {
       yield* service.reconcile(true);
     });
 
+    // SAFETY: `raw` implements only the IPC groups this path touches. The
+    // layer reads each group lazily, so an unimplemented call would throw
+    // here rather than pass silently — which is the assertion this test
+    // wants, not a hazard it hides.
     await Effect.runPromise(
       program.pipe(Effect.provide(layerFrom(raw as unknown as RawIpc))),
     );

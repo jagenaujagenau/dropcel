@@ -229,7 +229,7 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
                 // still keeping distinct events that share a millisecond (which
                 // filtering client-side on `created` would have dropped).
                 .getDeploymentEvents(auth, vercelDeployment.id, lastEventTs ? lastEventTs + 1 : undefined)
-                .pipe(Effect.catch(() => Effect.succeed([] as api.BuildEvent[]))),
+                .pipe(Effect.catch(() => Effect.succeed<api.BuildEvent[]>([]))),
             ],
             { concurrency: 2 },
           );
@@ -384,6 +384,10 @@ export function createApiDeployer(deps: ApiDeployerDeps): Deployer {
           // swallowed below, the app showed "canceled" while Vercel happily
           // kept building (and billing) it.
           const id = createdVercelId;
+          // SAFETY: re-stating the declared type of `createdAuth`, which
+          // TypeScript narrows to `null` inside this closure — it cannot see
+          // that the assignment at the top of the run happens before the
+          // cleanup path ever executes.
           const auth = createdAuth as api.VercelAuth | null;
           if (id && auth) {
             void api.run(api.cancelDeployment(auth, id)).catch(() => {});

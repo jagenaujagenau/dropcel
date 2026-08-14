@@ -95,7 +95,7 @@ function makeHarness(overrides: Partial<ApiDeployerDeps> = {}): Harness {
     deps,
     logs,
     created,
-    uploadedShas: () => mocks.uploadFile.mock.calls.map((c) => c[1] as string),
+    uploadedShas: () => mocks.uploadFile.mock.calls.map((c) => String(c[1])),
     progress: [],
   };
 }

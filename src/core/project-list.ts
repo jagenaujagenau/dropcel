@@ -117,7 +117,7 @@ export function countLabel(matching: number, total: number, searching: boolean):
 export const DEPLOYING_STATES = ["queued", "preparing", "uploading", "building"] as const;
 
 export function isDeploying(state: string | undefined): boolean {
-  return (DEPLOYING_STATES as readonly string[]).includes(state ?? "");
+  return DEPLOYING_STATES.some((s) => s === state);
 }
 
 /**
@@ -145,12 +145,12 @@ export function statusLabel(state: string | undefined): string {
   return STATUS_LABELS[state] ?? state;
 }
 
-const HOLD_LABELS: Record<HoldReason, string> = {
+const HOLD_LABELS = {
   offline: "Held — offline",
   "account-switch": "Held — account switch",
   "git-operation": "Held — git operation",
   "signed-out": "Held — signed out",
-};
+} satisfies Record<HoldReason, string>;
 
 export type ProjectBadge =
   | { kind: "git"; label: string; midOperation: boolean }

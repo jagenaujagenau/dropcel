@@ -3,6 +3,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Check, Copy } from "lucide-react";
 import type { LogLine } from "../core/types";
 import * as ipc from "../lib/ipc";
+import { describeError } from "../lib/log";
 import { cn } from "../lib/utils";
 import { Dialog } from "./ui/dialog";
 
@@ -33,7 +34,7 @@ export function LogViewerDialog({
         if (!cancelled) setLines(rows);
       })
       .catch((e) => {
-        if (!cancelled) setError(String((e as { message?: string })?.message ?? e));
+        if (!cancelled) setError(describeError(e));
       });
     return () => {
       cancelled = true;

@@ -8,6 +8,7 @@ import { deleteRemoteProject, projectDashboardUrlFrom } from "../core/deployment
 import { deployProject, latestDeploymentAtom, reconcile } from "../core/atoms";
 import { projectActions, type ProjectActionKind } from "../core/project-actions";
 import type { Project } from "../core/types";
+import { describeError } from "../lib/log";
 import * as ipc from "../lib/ipc";
 import { Button } from "./ui/button";
 import { ContextMenu, type ContextMenuState } from "./ui/context-menu";
@@ -152,7 +153,7 @@ export function ProjectContextMenu({
                     await ipc.fs.trashProject(menu.project.name);
                     await reconcile(false);
                   } catch (e) {
-                    setNote(String((e as { message?: string })?.message ?? e));
+                    setNote(describeError(e));
                     setTimeout(() => setNote(null), 6000);
                   }
                 }

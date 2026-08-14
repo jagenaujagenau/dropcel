@@ -5,6 +5,7 @@ import { getAuthToken } from "../core/auth";
 import type { Project } from "../core/types";
 import * as api from "../core/vercel-api";
 import * as ipc from "../lib/ipc";
+import { describeError } from "../lib/log";
 import { cn } from "../lib/utils";
 import { Dialog } from "./ui/dialog";
 
@@ -33,7 +34,7 @@ export function TeamDialog({ project, onDone }: { project: Project; onDone: () =
         const list = await api.run(api.listTeams({ token }));
         if (!cancelled) setTeams(list);
       } catch (e) {
-        if (!cancelled) setError(String((e as { message?: string })?.message ?? e));
+        if (!cancelled) setError(describeError(e));
       }
     })();
     return () => {

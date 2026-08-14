@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as ipc from "../lib/ipc";
+import { describeError } from "../lib/log";
 import { cn } from "../lib/utils";
 import { TriangleGlow } from "./TriangleGlow";
 import { Toast } from "./ui/toast";
@@ -55,7 +56,7 @@ export function DropZone() {
         try {
           results.push(await ipc.fs.importDroppedPath(path));
         } catch (e) {
-          errors.push(String((e as { message?: string })?.message ?? e));
+          errors.push(describeError(e));
         }
       }
       if (results.length > 0) {
@@ -115,7 +116,7 @@ export function DropZone() {
     // arrive before we're listening, e.g. app launched by the drop itself)
     // and drained here.
     const drainPending = async () => {
-      const paths = await ipc.fs.takePendingDrops().catch(() => [] as string[]);
+      const paths = await ipc.fs.takePendingDrops().catch((): string[] => []);
       if (paths.length > 0) await importDropped(paths);
     };
     const unlistenDock = listen("drops:available", () => void drainPending());

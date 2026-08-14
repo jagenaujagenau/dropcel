@@ -12,6 +12,9 @@ import "./index.css";
 installGlobalErrorLogging();
 applyCachedThemeSync();
 
+// SAFETY: index.html ships `<div id="root">` and this module is the only
+// entry point loaded from it, so the element exists before this line runs.
+// If it ever did not, createRoot would throw here rather than later.
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

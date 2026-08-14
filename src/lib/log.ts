@@ -23,7 +23,9 @@ export const log = {
 export const describeError = (e: unknown): string =>
   e instanceof Error
     ? e.message
-    : typeof e === "object" && e !== null && "message" in e
+    : // SAFETY: the property is proven present by the `in` check above; its
+      // value stays `unknown` because String() accepts anything.
+      typeof e === "object" && e !== null && "message" in e
       ? String((e as { message: unknown }).message)
       : String(e);
 

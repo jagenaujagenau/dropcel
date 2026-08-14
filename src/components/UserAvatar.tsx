@@ -2,6 +2,12 @@ import { useState } from "react";
 import { accountStateAtom, useAtomState } from "../core/atoms";
 import { cn } from "../lib/utils";
 
+/** The signed-in account's identity, as the avatar needs it. */
+interface SignedInAccount {
+  username: string | null;
+  avatarUrl: string | null;
+}
+
 /**
  * Vercel profile picture. Fallback chain mirrors Vercel's own dashboard:
  * real photo -> generated gradient identicon (avatar.vercel.sh) -> initial.
@@ -10,7 +16,7 @@ export function UserAvatar({ size = 16 }: { size?: number }) {
   return <AvatarFor {...useSignedInAccount()} size={size} />;
 }
 
-function useSignedInAccount(): { username: string | null; avatarUrl: string | null } {
+function useSignedInAccount(): SignedInAccount {
   const accountState = useAtomState(accountStateAtom, {
     username: null,
     avatarUrl: null,

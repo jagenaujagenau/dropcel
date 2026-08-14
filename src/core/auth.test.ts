@@ -114,6 +114,10 @@ describe("oauthRefreshOutcome — rotated refresh token", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("clears the spent token when the rotated one cannot be stored", async () => {
+    // SAFETY: `api.run` is generic over every effect the module can run, so
+    // its mocked resolution type collapses to the intersection of all of
+    // them. This is the OAuthTokens shape the code under test reads; `never`
+    // is the only spelling vitest accepts for a generic spy.
     vi.spyOn(api, "run").mockResolvedValue({
       accessToken: "new-access",
       refreshToken: "new-refresh",
@@ -131,6 +135,10 @@ describe("oauthRefreshOutcome — rotated refresh token", () => {
   });
 
   it("leaves the stored refresh token alone when the write succeeds", async () => {
+    // SAFETY: `api.run` is generic over every effect the module can run, so
+    // its mocked resolution type collapses to the intersection of all of
+    // them. This is the OAuthTokens shape the code under test reads; `never`
+    // is the only spelling vitest accepts for a generic spy.
     vi.spyOn(api, "run").mockResolvedValue({
       accessToken: "new-access",
       refreshToken: "new-refresh",

@@ -50,7 +50,8 @@ import {
 } from "../components/StatusIndicator";
 import { frameworkAccent, frameworkChip } from "../core/framework-theme";
 import {
-  FRAMEWORK_LABELS,
+  frameworkLabel,
+  toFramework,
   type Account,
   type Deployment,
   type Framework,
@@ -427,7 +428,7 @@ function FrameworkChip({ framework, owner }: { framework: Framework; owner?: Acc
 function ChipMark({ framework, className }: { framework: Framework; className?: string }) {
   return (
     <div
-      title={FRAMEWORK_LABELS[framework] ?? framework}
+      title={frameworkLabel(framework)}
       style={{ background: frameworkChip(framework) }}
       // A physical token on the card: lit lip along the top, contact shadow
       // under it. The mark itself is NOT blended — at 15px over a saturated
@@ -593,6 +594,10 @@ function ProjectCard({
     <div
       // `--fw` is set once here and every tint below is derived from it with
       // color-mix, so a framework's colour is defined in exactly one place.
+      // SAFETY: React types `style` as CSSProperties, which has no index
+      // signature for custom properties — `--fw` and `--card-bg` are valid
+      // CSS that the type cannot express. React passes unknown keys through
+      // to the DOM verbatim.
       style={
         {
           "--fw": accent,
@@ -684,7 +689,7 @@ function ProjectCard({
         // 25% was faking.
         <div aria-hidden className="absolute inset-0 flex items-center justify-center">
           <FrameworkLogo
-            framework={project.framework as Framework}
+            framework={toFramework(project.framework)}
             className="h-12 w-12 opacity-70 mix-blend-overlay [filter:brightness(0)_invert(1)]"
           />
         </div>
@@ -767,7 +772,7 @@ function ProjectCard({
           has a corner to itself — beside the URL it was competing with the
           address for the one line that has to stay readable. */}
       <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 px-3.5 pt-3">
-        <FrameworkChip framework={project.framework as Framework} owner={owner} />
+        <FrameworkChip framework={toFramework(project.framework)} owner={owner} />
         <MenuButton onOpen={onContextMenu} className="-mr-0.5 shrink-0" />
       </div>
 
@@ -962,7 +967,7 @@ function TableRow({
               </p>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <span className="text-[11px] text-faint">
-                  {FRAMEWORK_LABELS[project.framework as Framework] ?? project.framework}
+                  {frameworkLabel(project.framework)}
                 </span>
                 <BadgeRow badges={row.badges} />
               </div>
