@@ -1,0 +1,44 @@
+---
+import "../styles/global.css";
+import "../styles/page.css";
+
+const REPO = "https://github.com/jagenaujagenau/dropcel";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Not found — Dropcel</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  </head>
+
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="site-mark" href="/">
+          <img src="/logo.png" alt="" width="40" height="40" />
+          Dropcel
+        </a>
+        <nav>
+          <a href={REPO}>GitHub</a>
+          <a class="btn btn-primary" href={`${REPO}/releases/latest`}>Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="hero wrap">
+      <p class="eyebrow">404</p>
+      <h1>This one isn't here.</h1>
+      <p class="lede">Nothing at that address. The folder analogy only goes so far.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="/">Back to the start</a>
+      </div>
+    </main>
+  </body>
+</html>

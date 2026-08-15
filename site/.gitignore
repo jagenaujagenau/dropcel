@@ -1,0 +1,4 @@
+# Astro's generated type/content cache — rebuilt on every dev run and build.
+.astro/
+
+# `dist` and `node_modules` are already covered by the repo root .gitignore.

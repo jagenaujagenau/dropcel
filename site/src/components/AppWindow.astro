@@ -1,0 +1,304 @@
+---
+/**
+ * The Dropcel window, redrawn in HTML.
+ *
+ * Every act of the story is present in this markup at once; the stage driver in
+ * index.astro turns pieces on and off as the page scrolls. Nothing here decides
+ * anything — it is scenery, and `data-act` on the root is the only state.
+ */
+
+type Project = {
+  name: string;
+  fw: string;
+  url: string;
+  /** The act index at which this project's folder exists. */
+  from: number;
+};
+
+const projects: Project[] = [
+  { name: "portfolio", fw: "astro", url: "portfolio.vercel.app", from: 2 },
+  { name: "changelog", fw: "nextjs", url: "changelog-jag.vercel.app", from: 7 },
+  { name: "wedding", fw: "static", url: "kate-and-sam.vercel.app", from: 7 },
+  { name: "pricing-test", fw: "vite", url: "pricing-test.vercel.app", from: 7 },
+  { name: "docs", fw: "svelte", url: "docs-jag.vercel.app", from: 7 },
+  { name: "status", fw: "react", url: "status-jag.vercel.app", from: 7 },
+  { name: "og-images", fw: "vite", url: "og-images.vercel.app", from: 7 },
+  { name: "resume", fw: "static", url: "jagenau-cv.vercel.app", from: 7 },
+];
+
+const logo: Record<string, string> = {
+  astro: "/icons/astro-dark.svg",
+  nextjs: "/icons/next-dark.svg",
+  static: "/icons/other.svg",
+  vite: "/icons/vite.svg",
+  svelte: "/icons/svelte.svg",
+  react: "/icons/react.svg",
+};
+---
+
+{/* The frame exists so the menu-bar strip can sit above the window: `.app`
+    clips to its own rounded corners, and anything outside it is cut off. */}
+<div class="window-frame">
+  <div class="app" data-act="empty" data-focus>
+  <header class="app-header">
+    <span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="app-brand">
+      <svg class="tri" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 22 20H2Z"></path></svg>
+      Dropcel
+    </span>
+    <span class="pill pill-warning">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+        ><path d="M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 4-2.6M2 8.8a15 15 0 0 1 4.2-2.7M22 8.8a15 15 0 0 0-9.6-2.9M16.7 13a10 10 0 0 0-2.4-1.2M12 20h.01"
+        ></path></svg
+      >
+      Offline — changes held
+    </span>
+    <span class="spacer"></span>
+    <span class="chip-kbd">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+        ><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg
+      >
+      <kbd>⌘K</kbd>
+    </span>
+    {/* lucide `settings`, copied from the icon the app's own header renders. */}
+    <span class="icon-btn" aria-hidden="true">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        ></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+    </span>
+  </header>
+
+  <main class="app-main">
+    <div class="dash-bar">
+      <span class="dash-count"><span data-count>1</span> project<span data-plural></span></span>
+      <span class="field">Filter…</span>
+      <span class="seg" aria-hidden="true"><span data-on>Cards</span><span>Table</span></span>
+    </div>
+
+    <div class="grid">
+      {
+        projects.map((p, i) => (
+          <article
+            class="card"
+            data-i={i}
+            data-from={p.from}
+            data-state="live"
+            style={`--fw: var(--fw-${p.fw}); --fwc: var(--fwc-${p.fw});`}
+          >
+            <div class="shot" aria-hidden="true">
+              <i class="w-bar" />
+              <b class="w-hero" />
+              <i class="w-line" />
+              <i class="w-line short" />
+              <div class="w-tiles">
+                <i />
+                <i />
+                <i />
+              </div>
+            </div>
+            <div class="glass" aria-hidden="true" />
+            <div class="scrim" aria-hidden="true" />
+
+            <div class="card-top">
+              <span class="fw-chip">
+                <img src={logo[p.fw]} alt="" width="13" height="13" loading="lazy" />
+              </span>
+              <span class="kebab" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="5" r="1.6" />
+                  <circle cx="12" cy="12" r="1.6" />
+                  <circle cx="12" cy="19" r="1.6" />
+                </svg>
+              </span>
+            </div>
+
+            <div class="card-bottom">
+              <h3 class="card-name">{p.name}</h3>
+              <p class="card-url" data-url>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+                  <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+                </svg>
+                <span>{p.url}</span>
+              </p>
+              <p class="card-note" data-note hidden>
+                Not deployed yet
+              </p>
+              <div class="card-badges" data-badges />
+            </div>
+
+            <div class="term">
+              <div class="term-bar">
+                <span class="traffic" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span class="title">{p.name}</span>
+              </div>
+              <div class="term-log" data-log="first">
+                <span class="dim">$ watching ~/Vercel/{p.name}</span>
+                <span>
+                  detected <span class="dim">Astro — astro.config.mjs</span>
+                </span>
+                <span class="hold">withheld .env.local, .npmrc</span>
+                <span>
+                  uploading <span class="dim">34 files · 1.2 MB</span>
+                </span>
+                <span>
+                  building <span class="dim">astro build</span>
+                </span>
+                <span class="dim"> 12 pages built in 3.1s</span>
+                <span class="ok">
+                  ready {p.url} <span class="caret" />
+                </span>
+              </div>
+              <div class="term-log" data-log="second" hidden>
+                <span class="dim">$ saved src/pages/index.astro</span>
+                <span>
+                  digest <span class="dim">changed — deploying</span>
+                </span>
+                <span>
+                  uploading <span class="dim">1 file · 4 KB</span>
+                </span>
+                <span>
+                  building <span class="dim">astro build</span>
+                </span>
+                <span class="dim"> 12 pages built in 2.8s</span>
+                <span class="ok">ready {p.url}</span>
+                <span class="dim">
+                  copied URL to clipboard <span class="caret" />
+                </span>
+              </div>
+              <div class="term-status">
+                <span data-elapsed>0.0s</span>
+                <span class="state"><i class="dot building"></i> building</span>
+              </div>
+            </div>
+          </article>
+        ))
+      }
+    </div>
+
+    <!-- Act: the folder is empty. -->
+    <div class="overlay empty" data-overlay="empty">
+      <div>
+        <div class="art">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+            ><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path></svg
+          >
+        </div>
+        <h4>~/Vercel is empty</h4>
+        <p>Drop a folder in. That's the whole setup.</p>
+      </div>
+    </div>
+
+    <!--
+      Act: a folder is being dragged in. This is the app's own drop overlay —
+      the Matrix rain burning inside the Vercel triangle, running the real
+      shader (see lib/triangle-glow.ts). The canvas is created on first entry
+      into the act, not on page load: a WebGL2 context is expensive and most
+      visitors never scroll this far.
+    -->
+    <div class="overlay drop" data-overlay="drop" data-beat="carry">
+      <canvas class="rain" data-rain aria-hidden="true"></canvas>
+
+      {/* One copy block per beat; the driver moves `data-beat` on the parent. */}
+      <div class="drop-copy" data-beat="carry">
+        <p class="drop-title">Drop to deploy</p>
+        <p class="drop-sub">Live in seconds. URL in your clipboard.</p>
+      </div>
+      {/*
+        Not "portfolio landed in ~/Vercel" — that narrated the thing the reader
+        had just watched happen. The moment the folder lands, the interesting
+        news is that the next step is already running without anyone asking.
+      */}
+      <div class="drop-copy" data-beat="landed">
+        <p class="drop-title">Deploying…</p>
+        <p class="drop-sub">portfolio · 34 files</p>
+      </div>
+
+      {/*
+        The folder you are dragging. Its position is driven by scroll offset
+        rather than a CSS keyframe loop — a folder flying in on a timer reads as
+        decoration, where one that moves because you moved reads as the gesture
+        it is standing in for. It carries its name so it is obvious what is being
+        dropped, and where it ends up.
+      */}
+      <div class="folder-ghost" data-ghost aria-hidden="true">
+        <svg viewBox="0 0 64 52">
+          <path
+            d="M2 8a6 6 0 0 1 6-6h14l6 6h28a6 6 0 0 1 6 6v32a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6Z"
+            fill="oklch(62% 0.11 250)"></path>
+          <path d="M2 16h60v30a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6Z" fill="oklch(72% 0.09 250)"></path>
+        </svg>
+        <span class="folder-name">portfolio</span>
+      </div>
+    </div>
+
+    <!-- The user's editor: the only interface this loop really has. -->
+    <div class="editor" data-overlay="editor">
+      <div class="editor-bar"><i class="mod"></i> index.astro</div>
+      <pre><code>&lt;h1&gt;Kate &amp; Sam&lt;/h1&gt;
+<span class="add">&lt;p&gt;September 12 · Lisbon&lt;/p&gt;</span>&lt;/main&gt;</code></pre>
+      <div class="save"><span>⌘S</span><span data-saved>saved</span></div>
+    </div>
+
+    <div class="toast" data-overlay="toast">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="3" aria-hidden="true"
+        ><path d="m4 13 5 5L20 7"></path></svg
+      >
+      <span>Copied</span>
+      <code>portfolio.vercel.app</code>
+    </div>
+
+    <div class="palette" data-overlay="palette">
+      <div class="palette-panel">
+        <div class="palette-input">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+            ><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg
+          >
+          <span class="typed" data-typed></span><span class="caret"></span>
+        </div>
+        <div class="palette-list">
+          <div class="palette-group">Projects</div>
+          <div class="palette-row" data-sel style="--fwc: var(--fwc-astro)">
+            <span class="mark"></span> portfolio <span class="hint">Copy URL</span>
+          </div>
+          <div class="palette-row" style="--fwc: var(--fwc-vite)">
+            <span class="mark"></span> pricing-test <span class="hint">Visit</span>
+          </div>
+          <div class="palette-group">Actions</div>
+          <div class="palette-row is-action">Redeploy portfolio</div>
+          <div class="palette-row is-action">Open last failed build log</div>
+        </div>
+      </div>
+    </div>
+    </main>
+
+    <footer class="app-footer">
+      <span class="who"><i class="avatar"></i> jagenau</span>
+      <span class="where">~/Vercel</span>
+    </footer>
+  </div>
+
+  <div class="menubar" data-overlay="menubar">
+    <svg class="tri" width="11" height="11" viewBox="0 0 24 24" aria-hidden="true"
+      ><path d="M12 3 22 20H2Z"></path></svg
+    >
+    <span>Watching ~/Vercel</span>
+    <i class="dot ready"></i>
+  </div>
+</div>

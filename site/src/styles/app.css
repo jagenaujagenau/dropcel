@@ -1,0 +1,965 @@
+/*
+ * The emulation. Everything under `.app` is a low-fidelity redraw of the real
+ * Dropcel window: same tokens, same radii, same materials, one third of the
+ * detail. It is deliberately not a screenshot — a screenshot goes stale the
+ * week after it is taken, and it cannot be driven by the scrollbar.
+ */
+
+.window-frame {
+  position: relative;
+  /* Room above the window for the menu-bar strip to drop into. */
+  padding-top: 2.4rem;
+}
+
+.app {
+  --chrome: 13px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* The real window ships at 1080×720. A shade taller here so eight project
+     cards land inside the frame instead of being clipped by it — a dashboard
+     cut off mid-card reads as a broken screenshot, not as a scrollable list. */
+  aspect-ratio: 16 / 12;
+  border-radius: 12px;
+  background: var(--background);
+  font-size: var(--chrome);
+  line-height: 18px;
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 2px 4px -1px light-dark(oklch(0 0 0 / 0.1), oklch(0 0 0 / 0.55)),
+    0 40px 80px -32px light-dark(oklch(0 0 0 / 0.22), oklch(0 0 0 / 0.75));
+}
+
+/* ── chrome ──────────────────────────────────────────────────────────────── */
+
+.app-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.traffic {
+  display: flex;
+  gap: 5px;
+  margin-right: 0.35rem;
+}
+.traffic i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.app[data-focus] .traffic i:nth-child(1) {
+  background: #ff5f57;
+}
+.app[data-focus] .traffic i:nth-child(2) {
+  background: #febc2e;
+}
+.app[data-focus] .traffic i:nth-child(3) {
+  background: #28c840;
+}
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.tri {
+  width: 13px;
+  height: 13px;
+  fill: var(--foreground);
+}
+.app-header .spacer {
+  margin-left: auto;
+}
+.chip-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: 11px;
+}
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+.app-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0.85rem;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 11px;
+}
+.app-footer .who {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.avatar {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, oklch(60% 0.14 265), oklch(45% 0.16 300));
+}
+.app-footer .where {
+  font-family: var(--font-mono);
+}
+
+/* A header pill that only exists in the acts that need it. */
+.pill {
+  display: none;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  font-size: 11px;
+}
+.pill-warning {
+  color: var(--warning);
+  border-color: color-mix(in oklab, var(--warning) 30%, transparent);
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
+}
+.app[data-act="held"] .pill-warning {
+  display: inline-flex;
+}
+
+/* ── toolbar ─────────────────────────────────────────────────────────────── */
+
+.dash-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem 0.55rem;
+}
+.dash-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.field {
+  flex: 1;
+  max-width: 190px;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-well);
+  color: var(--faint);
+  font-size: 11px;
+}
+.seg {
+  display: flex;
+  margin-left: auto;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--vbg-gray-alpha-100);
+}
+.seg span {
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.seg span[data-on] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-raised);
+}
+
+/* ── grid ────────────────────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  padding: 0 0.9rem 0.9rem;
+}
+/*
+ * Phone width. A 16:12 window scaled to 340px has room for two rows of cards
+ * and nothing else, so the frame goes portrait and the folder shows six of its
+ * eight projects — the grid is making a point about quantity, and six of them
+ * legible makes it better than eight of them clipped. The count in the toolbar
+ * is read off what is actually on screen (see the stage driver), so it stays
+ * honest either way.
+ */
+@media (max-width: 560px) {
+  .app {
+    aspect-ratio: 3 / 4;
+  }
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .card[data-i="6"],
+  .card[data-i="7"] {
+    display: none;
+  }
+  .app[data-act="detect"] .grid,
+  .app[data-act="build"] .grid,
+  .app[data-act="live"] .grid,
+  .app[data-act="save"] .grid,
+  .app[data-act="held"] .grid {
+    grid-template-columns: 60%;
+  }
+}
+
+/*
+ * While the story is following one project, that project's card gets a column
+ * of its own size rather than a quarter of the window. The build log is the
+ * thing being read in those acts, and at a quarter width it is 9px of mono in a
+ * 170px box — technically accurate and practically unreadable.
+ */
+.app[data-act="detect"] .grid,
+.app[data-act="build"] .grid,
+.app[data-act="live"] .grid,
+.app[data-act="save"] .grid,
+.app[data-act="held"] .grid {
+  grid-template-columns: min(300px, 46%);
+}
+
+/*
+ * A card leaving the scene. `visibility` rather than `display` so the grid
+ * tracks do not resize under the cards that stay — the folder gaining a project
+ * should read as a card arriving, not as the whole grid reflowing.
+ */
+.card.is-out {
+  visibility: hidden;
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+.card {
+  --fw: var(--fw-static);
+  --card-bg: color-mix(in oklab, var(--fw) 5%, var(--surface));
+  position: relative;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border-radius: 14px;
+  background: linear-gradient(150deg, color-mix(in oklab, var(--fw) 22%, var(--surface)), var(--card-bg));
+  box-shadow:
+    0 4px 16px -8px light-dark(oklch(0 0 0 / 0.16), oklch(0 0 0 / 0.5)),
+    0 0 0 1px light-dark(oklch(0 0 0 / 0.07), oklch(0 0 0 / 0.1));
+  contain: layout paint;
+  transition: opacity 260ms ease, transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The card's whole edge, painted last so no child can cover it: an inner
+   hairline for thickness and a brighter lip on top, where light catches the
+   edge of real glass. */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.15), inset 0 1px 0 rgb(255 255 255 / 0.3);
+}
+
+/*
+ * The "screenshot": a wireframe of the deployed site, drawn in the framework's
+ * own hue. Low-fi on purpose — the card exists to say *which* site this is, and
+ * at 150px a real screenshot says that no better than four bars do.
+ */
+.shot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  /* Proportional, not pixel — the same card is 170px wide in the eight-project
+     grid and 300px while the story follows one project, and a fixed 62px hero
+     that fills one leaves the other as an empty gradient. */
+  gap: 2.5%;
+  padding: 5%;
+  background: color-mix(in oklab, var(--fw) 12%, light-dark(white, oklch(0.14 0 0)));
+}
+/*
+ * Stronger than the real thing would need to be. A photograph survives a 14px
+ * blur because it is dense; four bars do not, and a wireframe that dissolves
+ * into a coloured blob stops saying "this is a website".
+ */
+.shot i,
+.shot b {
+  display: block;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--fw) 80%, transparent);
+}
+.shot .w-bar {
+  height: 4.5%;
+  flex: none;
+}
+.shot .w-hero {
+  height: 34%;
+  flex: none;
+  background: color-mix(in oklab, var(--fw) 62%, transparent);
+}
+.shot .w-line {
+  height: 2.5%;
+  width: 78%;
+  flex: none;
+}
+.shot .w-line.short {
+  width: 52%;
+}
+.shot .w-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3%;
+  height: 20%;
+  flex: none;
+  /* Packed to the top, not spread to the bottom edge: the card's own scrim is
+     near-black across its lowest third, so anything anchored down there is
+     drawn and then buried. */
+}
+.shot .w-tiles i {
+  height: 100%;
+}
+
+/* The glass pane over the whole shot — vibrancy, a faint fill, and the scrim
+   that makes white text safe over an arbitrary page. */
+.card .glass {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgb(255 255 255 / 0.06);
+  backdrop-filter: blur(7px) saturate(180%);
+  -webkit-backdrop-filter: blur(7px) saturate(180%);
+  transition: backdrop-filter 200ms ease-out, background-color 200ms ease-out;
+}
+.card:hover .glass {
+  background: rgb(255 255 255 / 0.02);
+  backdrop-filter: blur(2px) saturate(180%);
+  -webkit-backdrop-filter: blur(2px) saturate(180%);
+  transition-duration: 320ms;
+}
+.card .scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, rgb(0 0 0 / 0.3) 0%, rgb(0 0 0 / 0.12) 16%, transparent 32%),
+    linear-gradient(to top, rgb(0 0 0 / 0.62) 0%, rgb(0 0 0 / 0.5) 10%, rgb(0 0 0 / 0.26) 22%, rgb(0 0 0 / 0.07) 31%, transparent 38%);
+}
+
+.card-top {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.5rem 0.55rem 0;
+}
+.fw-chip {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--fwc, var(--fwc-static));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.35), 0 1px 2px oklch(0 0 0 / 0.35);
+  outline: 1px solid rgb(255 255 255 / 0.2);
+  outline-offset: -1px;
+}
+.fw-chip img {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+  filter: brightness(0) invert(1) drop-shadow(0 1px 1px oklch(0 0 0 / 0.35));
+}
+.kebab {
+  color: rgb(255 255 255 / 0.75);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.card:hover .kebab {
+  opacity: 1;
+}
+
+.card-bottom {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 0 0.55rem 0.5rem;
+  min-width: 0;
+}
+.card-name {
+  overflow: hidden;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-url {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 2px;
+  color: rgb(255 255 255 / 0.8);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+/* The truncation has to happen on the text, not on the flex row — a flex
+   container cannot ellipsis a bare text node, so the address just ran off the
+   card's edge with a hard cut. */
+.card-url svg {
+  flex: none;
+}
+.card-url span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-note {
+  margin-top: 2px;
+  color: rgb(255 255 255 / 0.6);
+  font-size: 11px;
+}
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.16);
+  color: rgb(255 255 255 / 0.9);
+  font-size: 9px;
+  line-height: 15px;
+  backdrop-filter: blur(4px);
+}
+.badge.warn {
+  background: color-mix(in oklab, var(--vbg-amber-900) 30%, rgb(0 0 0 / 0.3));
+}
+
+/* ── a card mid-deploy: an actual terminal window ─────────────────────────── */
+
+.card[data-state="build"] .shot,
+.card[data-state="build"] .glass,
+.card[data-state="build"] .scrim,
+.card[data-state="build"] .card-bottom,
+.card[data-state="build"] .card-top {
+  display: none;
+}
+.card[data-state="build"] {
+  background: oklch(0.145 0.008 265);
+}
+.card[data-state="build"]::after {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+.term {
+  display: none;
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+}
+.card[data-state="build"] .term {
+  display: flex;
+  animation: terminal-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes terminal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.965);
+  }
+}
+.term-bar {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 5px 7px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+.term-bar .traffic i {
+  width: 7px;
+  height: 7px;
+}
+.term-bar .title {
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  translate: 0 -50%;
+  margin-inline: auto;
+  width: max-content;
+  max-width: 58%;
+  overflow: hidden;
+  color: rgb(255 255 255 / 0.6);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-log {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 7px;
+  color: rgb(255 255 255 / 0.72);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.6;
+}
+/* Direct children only — a line's own detail is a nested span, and matching it
+   here turned every "detected Astro" into two block-level rows with the
+   second one permanently invisible. */
+.term-log > span {
+  display: block;
+  overflow: hidden;
+  opacity: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 120ms ease;
+}
+.term-log > span.on {
+  opacity: 1;
+}
+.term-log .dim {
+  color: rgb(255 255 255 / 0.42);
+}
+.term-log .ok {
+  color: oklch(73% 0.21 148);
+}
+.term-log .hold {
+  color: oklch(77% 0.19 64);
+}
+.caret {
+  display: inline-block;
+  width: 5px;
+  height: 9px;
+  translate: 0 1px;
+  background: rgb(255 255 255 / 0.7);
+  animation: caret 1.06s step-end infinite;
+}
+@keyframes caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.term-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 7px;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.04);
+  color: rgb(255 255 255 / 0.45);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.term-status .state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.1);
+  color: rgb(255 255 255 / 0.75);
+  line-height: 15px;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.dot.building {
+  background: var(--warning);
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+.dot.ready {
+  background: var(--success);
+}
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── overlays ────────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease-out;
+}
+.overlay[data-on] {
+  opacity: 1;
+}
+
+/* The empty folder. */
+.empty {
+  background: var(--background);
+  text-align: center;
+}
+.empty .art {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  margin: 0 auto 0.75rem;
+  border-radius: 14px;
+  border: 1px dashed var(--border-strong);
+  color: var(--faint);
+}
+.empty h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.empty p {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/*
+ * Drag-and-drop, mid-flight. Same construction as the app's DropZone: a
+ * near-opaque blurred backdrop, the rain canvas filling it, and the copy
+ * anchored at 12% from the bottom.
+ */
+.drop {
+  display: block;
+  background: color-mix(in oklab, var(--background) 90%, transparent);
+  backdrop-filter: blur(12px);
+}
+/* `color` is what the shader reads to decide light vs dark — a light
+   foreground means a dark surface behind it. */
+.drop .rain {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--foreground);
+}
+.drop-copy {
+  position: absolute;
+  inset: auto 0 12%;
+  padding-inline: 1.5rem;
+  text-align: center;
+  opacity: 0;
+  translate: 0 4px;
+  transition: opacity 220ms ease-out, translate 220ms ease-out;
+}
+.drop[data-beat="carry"] .drop-copy[data-beat="carry"],
+.drop[data-beat="landed"] .drop-copy[data-beat="landed"] {
+  opacity: 1;
+  translate: 0 0;
+}
+.drop-title {
+  font-size: clamp(1rem, 2.6cqw, 1.5rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.drop-sub {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: clamp(0.7rem, 1.5cqw, 0.875rem);
+}
+/*
+ * The dragged folder. Anchored at the centre of the overlay — the point it is
+ * being carried TO — and offset back out to its start by `--dx`/`--dy`, which
+ * the stage driver writes from scroll position. Individual transform properties
+ * rather than one `transform`, so four independent values can be set without
+ * any of them having to know the others.
+ */
+.folder-ghost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 13%;
+  max-width: 76px;
+  translate: calc(-50% + var(--dx, 0px)) calc(-50% + var(--dy, 0px));
+  rotate: var(--rot, -8deg);
+  scale: var(--scale, 1);
+  opacity: var(--fade, 1);
+  filter: drop-shadow(0 12px 18px oklch(0 0 0 / 0.45));
+}
+.folder-ghost svg {
+  display: block;
+  width: 100%;
+}
+/* The name is the whole reason this reads as "a project arriving" rather than
+   "a blue shape moving". */
+.folder-name {
+  display: block;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--background) 82%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 0 1px var(--border);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 17px;
+  text-align: center;
+}
+
+/* The clipboard toast — the URL is already copied, so the page says so the way
+   the app does rather than telling you to go and copy it. */
+.toast {
+  position: absolute;
+  z-index: 4;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  font-size: 11px;
+  opacity: 0;
+  translate: 0 6px;
+  transition: opacity 200ms ease-out, translate 200ms ease-out;
+}
+.toast[data-on] {
+  opacity: 1;
+  translate: 0 0;
+}
+.toast code {
+  color: var(--muted);
+}
+
+/* The editor. Not a feature of the app — it is the user's own editor, which is
+   the only interface the loop actually has. */
+/* Beside the card, not on top of it. The point of this act is that the editor
+   and the build log are both live at once — one covering the other says the
+   opposite. */
+.editor {
+  position: absolute;
+  z-index: 4;
+  right: 5%;
+  top: 26%;
+  width: 46%;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: light-dark(oklch(0.99 0 0), oklch(0.09 0 0));
+  box-shadow: 0 24px 48px -18px oklch(0 0 0 / 0.6);
+  opacity: 0;
+  translate: 0 10px;
+  transition: opacity 200ms ease-out, translate 200ms ease-out;
+}
+.editor[data-on] {
+  opacity: 1;
+  translate: 0 0;
+}
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.editor-bar .mod {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.editor pre {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.editor .add {
+  display: block;
+  margin-inline: -10px;
+  padding-inline: 10px;
+  background: color-mix(in oklab, var(--success) 14%, transparent);
+  color: var(--foreground);
+}
+.editor .save {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+/* ⌘K. */
+.palette {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding-top: 12%;
+  background: color-mix(in oklab, black 45%, transparent);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+.palette[data-on] {
+  opacity: 1;
+}
+.palette-panel {
+  width: 66%;
+  height: max-content;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in oklab, var(--background) 92%, transparent);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: 0 24px 48px -16px oklch(0 0 0 / 0.6);
+}
+.palette[data-on] .palette-panel {
+  animation: panel-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 12px;
+}
+.palette-input .typed {
+  color: var(--foreground);
+}
+.palette-list {
+  padding: 4px;
+}
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+}
+.palette-row[data-sel] {
+  background: var(--vbg-gray-alpha-100);
+  color: var(--foreground);
+}
+.palette-row .hint {
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+/* Actions have no project to be tinted by, so they get the indent without the
+   swatch — a grey square in a column of framework colours reads as a project
+   whose colour failed to load. */
+.palette-row.is-action {
+  padding-left: 1.7rem;
+}
+.palette-row .mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--fwc, var(--fwc-static));
+}
+.palette-group {
+  padding: 6px 8px 2px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The menu bar strip above the window — where the loop actually lives once the
+   window is closed. */
+.menubar {
+  position: absolute;
+  z-index: 6;
+  top: 0.4rem;
+  right: 6%;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-raised);
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0;
+  translate: 0 6px;
+  transition: opacity 220ms ease-out, translate 220ms ease-out;
+}
+.menubar[data-on] {
+  opacity: 1;
+  translate: 0 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

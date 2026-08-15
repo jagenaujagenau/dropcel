@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  @font-face {
+    font-family: "Geist Sans";
+    src: url("FONT_400") format("woff2");
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "Geist Sans";
+    src: url("FONT_600") format("woff2");
+    font-weight: 600;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 84px 90px;
+    background: #000;
+    background-image:
+      radial-gradient(60rem 30rem at 12% -20%, rgba(157, 108, 255, 0.16), transparent 70%),
+      radial-gradient(50rem 30rem at 100% 30%, rgba(70, 160, 255, 0.10), transparent 70%);
+    color: #f1f1f1;
+    font-family: "Geist Sans", -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mark { display: flex; align-items: center; gap: 18px; }
+  .mark img { width: 64px; height: 64px; border-radius: 14px; }
+  .mark span { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+  h1 {
+    margin-top: 58px;
+    font-size: 92px;
+    font-weight: 600;
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+  }
+  p {
+    margin-top: 30px;
+    max-width: 22ch;
+    color: #a3a3a3;
+    font-size: 31px;
+    line-height: 1.4;
+  }
+</style>
+<div class="mark"><img src="LOGO_SRC" /><span>Dropcel</span></div>
+<h1>Your door to<br />the internet.</h1>
+<p>One folder. Anything you put inside comes out online.</p>

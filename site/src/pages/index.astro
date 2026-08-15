@@ -1,0 +1,706 @@
+---
+import AppWindow from "../components/AppWindow.astro";
+import "../styles/global.css";
+import "../styles/app.css";
+import "../styles/page.css";
+
+const REPO = "https://github.com/jagenaujagenau/dropcel";
+const INSTALL = "brew install --cask jagenaujagenau/tap/dropcel";
+
+const title = "Dropcel — a smart folder for your projects";
+const description =
+  "One folder on your computer. Anything you put inside comes out on the internet, with a link ready to send. No uploading, no pushing, no setup.";
+
+// `Astro.site` comes from astro.config.mjs. Everything absolute derives from it,
+// so pointing the site at a different domain is a one-line change.
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+const ogImage = new URL("/og.png", Astro.site).href;
+
+
+/**
+ * The nine acts, in order. Index is the contract between this array, the
+ * captions below, and the stage driver at the bottom of the file.
+ *
+ * `hold` is how much scroll the act is worth, relative to the others. Equal
+ * ninths gave every beat the same length, which is wrong in both directions:
+ * the drop is the one thing on this page a first-time reader has to actually
+ * understand, and it went past in the same breath as a caption they can read in
+ * three seconds. The acts that are doing something — carrying a folder in,
+ * running a build — get room; the ones that are a single still frame don't.
+ */
+const acts = [
+  {
+    hold: 1,
+    title: "It's just a folder",
+    body: "It sits in your home directory like any other. Nothing to open, nothing to log into.",
+    aside: "Nothing to set up.",
+  },
+  {
+    hold: 3.0,
+    title: "Drop a project in",
+    body: "Drag it onto the window, or move it into the folder like any other file.",
+    aside: "This is the only step there is.",
+  },
+  {
+    hold: 1.1,
+    title: "It works out the rest",
+    body: "It reads the files and figures out how to build the thing. You don't tell it anything.",
+    aside: "Same for the next one you drop in.",
+  },
+  {
+    hold: 1.8,
+    title: "It goes online by itself",
+    body: "Your files upload and the site builds. You didn't press a thing.",
+    aside: "Usually a few seconds.",
+  },
+  {
+    hold: 1.2,
+    title: "You get a link",
+    body: "Already copied, ready to send. That's the part you were after.",
+    aside: "Send it to anyone.",
+  },
+  {
+    hold: 2.0,
+    title: "Edit it and it updates",
+    body: "Change a file and save. The live version catches up on its own, every time.",
+    aside: "You never do this part again.",
+  },
+  {
+    hold: 1.2,
+    title: "It waits when it should",
+    body: "No internet, or a file half-written? It holds on, then sends the finished thing.",
+    aside: "Nobody sees a broken page.",
+  },
+  {
+    hold: 1.1,
+    title: "Find anything fast",
+    body: "Press ⌘K to jump to a project, copy its link, or send it again.",
+    aside: "Or just right-click it.",
+  },
+  {
+    hold: 1.3,
+    title: "Everything in one place",
+    body: "All your projects, side by side, quietly kept up to date while you get on with it.",
+    aside: "No dashboard to go and check.",
+  },
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/icon.png" type="image/png" sizes="512x512" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="canonical" href={canonical} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    {/* Absolute URLs, built off `site` in astro.config.mjs — crawlers and every
+        social scraper reject relative ones, which is what these used to be. */}
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en" />
+    <meta property="og:site_name" content="Dropcel" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Dropcel — your door to the internet" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  </head>
+
+  <body>
+    <header class="site-header" id="siteHeader">
+      <div class="wrap">
+        <a class="site-mark" href="/">
+          <img src="/logo.png" alt="" width="40" height="40" />
+          Dropcel
+        </a>
+        <nav>
+          <a class="hide-sm" href="#how">How it works</a>
+          <a class="hide-sm" href="#jobs">What it's for</a>
+          <a href={REPO}>GitHub</a>
+          <a class="btn btn-primary" href={`${REPO}/releases/latest`}>Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero wrap">
+        <p class="eyebrow">macOS · Windows · Linux</p>
+        <h1>Your door to<br />the internet.</h1>
+        <p class="lede">
+          One folder on your computer. Anything you put inside comes out on the internet, with a
+          link ready to send.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href={`${REPO}/releases/latest`}>Download for macOS</a>
+          <a class="btn btn-secondary" href={REPO}>View source</a>
+        </div>
+        <div class="brew" data-brew>
+          <span class="prompt" aria-hidden="true">$</span><span class="cmd">{INSTALL}</span><span
+            class="cursor"
+            aria-hidden="true"></span>
+          <span class="brew-note" aria-hidden="true"></span>
+        </div>
+        <p class="hero-meta">Free and open source. You'll need a Vercel account — the free one is fine.</p>
+      </section>
+
+      <!--
+        The reason this exists, told as the thing it replaces. Getting a page online has
+        always meant learning a delivery mechanism first; this is the first version where
+        there isn't one.
+      -->
+      <section class="section eras-section wrap">
+        <div class="section-head">
+          <p class="eyebrow">Getting something online</p>
+          <h2>It used to be a whole thing.</h2>
+        </div>
+        <!--
+          The steps are listed rather than described, because the argument is the
+          SHAPE of the three columns: six lines, five lines, one. Nothing has to
+          say "this is fewer steps" — you can see it from across the room, and the
+          empty space under the last one is the whole point of the section.
+        -->
+        <ol class="eras">
+          <li>
+            <p class="era">First</p>
+            <h3>FTP</h3>
+            <ol class="steps">
+              <li>Open an FTP client</li>
+              <li>Find the host, user and password</li>
+              <li>Dig for the right remote folder</li>
+              <li>Drag the files across</li>
+              <li>Wait</li>
+              <li>Reload, and hope you got the right ones</li>
+            </ol>
+            <p class="count">Six steps. <span>Every time.</span></p>
+          </li>
+          <li>
+            <p class="era">Then</p>
+            <h3>Git</h3>
+            <ol class="steps">
+              <li>Set up a repo</li>
+              <li>Stage the files</li>
+              <li>Write a commit message</li>
+              <li>Push</li>
+              <li>Wait for the build to go green</li>
+            </ol>
+            <p class="count">Five steps. <span>Every time.</span></p>
+          </li>
+          <li data-now>
+            <p class="era">Now</p>
+            <h3>A folder</h3>
+            <ol class="steps">
+              <li>Put it in</li>
+            </ol>
+            <p class="count">One step. <span>Once.</span></p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- The scene. One window; the scrollbar is the only input. -->
+      <section
+        class="stage"
+        id="stage"
+        data-weights={JSON.stringify(acts.map((a) => a.hold))}
+        style={`--acts: ${acts.reduce((n, a) => n + a.hold, 0)}`}
+        aria-label="How Dropcel works"
+      >
+        <div class="stage-sticky">
+          <div class="stage-inner wrap">
+            <div class="captions" id="captions">
+              {
+                acts.map((a, i) => (
+                  <article class="caption" data-caption={i} data-on={i === 0 ? "" : null}>
+                    <div class="acts" aria-hidden="true">
+                      {acts.map((_, j) => <i data-on={j === i ? "" : null} />)}
+                    </div>
+                    <h2>{a.title}</h2>
+                    <p set:html={a.body} />
+                    <p class="aside" set:html={a.aside} />
+                  </article>
+                ))
+              }
+            </div>
+
+            <div class="window-slot" id="how">
+              <AppWindow />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <noscript>
+        <div class="wrap">
+          <ol class="noscript-steps">
+            {acts.map((a) => <li><strong>{a.title}.</strong> <span set:html={a.body} /></li>)}
+          </ol>
+        </div>
+      </noscript>
+
+      <section class="section wrap turn-section">
+        <div class="turn">
+          <p class="eyebrow">What actually changes</p>
+          <h2>You'll put more things online.</h2>
+          <p>
+            When a roll of film cost money, people photographed weddings and birthdays. When it
+            stopped costing anything, they started photographing whiteboards, receipts, and where
+            they parked the car.
+          </p>
+          <p>
+            Nobody got better at photography. The price of one photo changed, and what counted as
+            worth photographing changed with it.
+          </p>
+          <p>
+            Putting something online works the same way. Right now you only do it for things that
+            have earned it. Take that cost to nothing and you'll put up the half-finished idea,
+            the page for one person, the thing you'd otherwise have sent as a zip.
+          </p>
+          <p class="turn-last">
+            So the thing you get isn't a faster deploy. It's more of your ideas ending up
+            somewhere other than your hard drive.
+          </p>
+        </div>
+      </section>
+
+      <section class="section wrap" id="jobs">
+        <div class="section-head">
+          <p class="eyebrow">What it's for</p>
+          <h2>What ends up in the folder.</h2>
+          <p>
+            If your project lives on GitHub with other people reviewing it, you're already
+            covered — and you'd miss the review step here. This is for everything else.
+          </p>
+        </div>
+        <div class="cards">
+          <article>
+            <span class="tag">Keeps changing</span>
+            <h3>A page you keep tweaking</h3>
+            <p>A portfolio, a CV, a wedding page. You change it often, so it updates often.</p>
+          </article>
+          <article>
+            <span class="tag">Made by AI</span>
+            <h3>Something an AI built you</h3>
+            <p>Claude or v0 hands you a folder. Put it online without learning anything new.</p>
+          </article>
+          <article>
+            <span class="tag">Being watched</span>
+            <h3>A demo someone's looking at</h3>
+            <p>They ask for a change. You make it, they refresh, it's there.</p>
+          </article>
+          <article>
+            <span class="tag">Lots of them</span>
+            <h3>More sites than you can track</h3>
+            <p>Ten small projects, all online, nothing for you to remember.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section wrap">
+        <div class="section-head">
+          <p class="eyebrow">The small print</p>
+          <h2>The things you'd want to ask about.</h2>
+        </div>
+        <ol class="facts">
+          <li>
+            <h3>Your secrets stay put</h3>
+            <p>Passwords and keys are never uploaded, and it tells you which files it skipped.</p>
+          </li>
+          <li>
+            <h3>It doesn't repeat itself</h3>
+            <p>If nothing actually changed, nothing gets sent.</p>
+          </li>
+          <li>
+            <h3>It says what went wrong</h3>
+            <p>Plain English, like “package.json is missing”. The details are one click away.</p>
+          </li>
+          <li>
+            <h3>Nothing is locked in</h3>
+            <p>They're normal Vercel projects on your own account. Walk away and they stay up.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="section wrap">
+        <div class="cta">
+          <img src="/logo.png" alt="" width="64" height="64" />
+          <h2>Give it something to put online.</h2>
+          <p>Sign in once, drop a folder, and that's the last time you think about any of this.</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href={`${REPO}/releases/latest`}>Download for macOS</a>
+            <a class="btn btn-secondary" href={`${REPO}/releases/latest`}>Windows &amp; Linux builds</a>
+          </div>
+          <div class="brew" data-brew>
+            <span class="prompt" aria-hidden="true">$</span><span class="cmd">{INSTALL}</span><span
+              class="cursor"
+              aria-hidden="true"></span>
+            <span class="brew-note" aria-hidden="true"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>Dropcel — MIT licensed. Not affiliated with Vercel.</span>
+        <nav>
+          <a href={REPO}>Source</a>
+          <a href={`${REPO}/releases`}>Releases</a>
+          <a href={`${REPO}/issues`}>Issues</a>
+        </nav>
+      </div>
+    </footer>
+
+    <style>
+      /* `--acts` is the sum of the acts' `hold` weights, not their count — see
+         the array at the top of this file. One unit is a bit under a viewport of
+         scroll: any less and a beat flicks past faster than it can be read, any
+         more and the page feels like it has stopped responding. */
+      .stage {
+        height: calc(var(--acts) * 72svh);
+      }
+    </style>
+
+    <script>
+      // The three eras arrive one after another. Armed from here rather than in
+      // the stylesheet so that without JS they are simply on screen — a reveal
+      // that depends on a script must never be able to hide content for good.
+      const eras = document.querySelector<HTMLElement>(".eras");
+      if (eras) {
+        eras.classList.add("reveal-armed");
+        new IntersectionObserver(
+          (entries, self) => {
+            for (const e of entries) {
+              if (!e.isIntersecting) continue;
+              eras.classList.add("is-in");
+              self.disconnect();
+            }
+          },
+          { threshold: 0.25 },
+        ).observe(eras);
+      }
+
+      /*
+       * Click-to-copy on the install line.
+       *
+       * Upgraded here rather than rendered as a <button>: without a script — or
+       * without the async clipboard API — the line stays plain text with no
+       * pointer, no focus ring and no label promising something that won't
+       * happen. The affordance only exists once it can be honoured.
+       */
+      const brews = document.querySelectorAll<HTMLElement>("[data-brew]");
+      if (brews.length && navigator.clipboard?.writeText) {
+        // Announced separately, because the visible label is aria-hidden and a
+        // silent copy leaves a screen-reader user with no confirmation at all.
+        const live = document.createElement("p");
+        live.className = "sr-only";
+        live.setAttribute("aria-live", "polite");
+        document.body.append(live);
+
+        for (const el of brews) {
+          const command = el.querySelector<HTMLElement>(".cmd")?.textContent?.trim() ?? "";
+          if (!command) continue;
+
+          el.dataset.armed = "";
+          el.setAttribute("role", "button");
+          el.setAttribute("tabindex", "0");
+          el.setAttribute("aria-label", `Copy install command: ${command}`);
+
+          let settle: ReturnType<typeof setTimeout>;
+          const copy = async () => {
+            try {
+              await navigator.clipboard.writeText(command);
+              el.dataset.copied = "";
+              live.textContent = "Install command copied";
+            } catch {
+              // Denied permission, or an insecure origin. Select the text so the
+              // keyboard route still works instead of failing silently.
+              const range = document.createRange();
+              range.selectNodeContents(el.querySelector(".cmd")!);
+              const sel = getSelection();
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+              live.textContent = "Press Command-C to copy";
+              return;
+            }
+            clearTimeout(settle);
+            settle = setTimeout(() => {
+              delete el.dataset.copied;
+              live.textContent = "";
+            }, 1800);
+          };
+
+          el.addEventListener("click", () => void copy());
+          el.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault(); // Space would scroll the page.
+            void copy();
+          });
+        }
+      }
+    </script>
+
+    <script>
+      import { mountTriangleGlow, type Glow } from "../lib/triangle-glow";
+
+      /*
+       * The stage driver.
+       *
+       * One job: turn scroll position into an act index plus a 0–1 progress
+       * within that act, then hand both to `render`. Nothing else on the page
+       * holds state — re-rendering the same act with the same progress is a
+       * no-op, which is what makes it safe to call on every frame.
+       */
+      const stage = document.getElementById("stage");
+      const app = document.querySelector<HTMLElement>(".app");
+      if (stage && app) {
+        const ACTS = [
+          "empty",
+          "drop",
+          "detect",
+          "build",
+          "live",
+          "save",
+          "held",
+          "palette",
+          "grid",
+        ] as const;
+
+        // Per-act scroll weights, authored in the frontmatter and handed over on
+        // the element. `EDGES[i]` is where act `i` begins, in weight units.
+        const WEIGHTS: number[] = JSON.parse(stage.dataset.weights ?? "[]");
+        const EDGES = [0];
+        for (const w of WEIGHTS) EDGES.push(EDGES[EDGES.length - 1]! + w);
+        const SPAN = EDGES[EDGES.length - 1] || ACTS.length;
+
+        const captions = [...document.querySelectorAll<HTMLElement>("[data-caption]")];
+        const cards = [...app.querySelectorAll<HTMLElement>(".card")];
+        const hero = cards[0]!;
+        // Scoped to the frame, not the window: the menu-bar strip lives outside
+        // `.app`, which clips to its own corners.
+        const frame = app.closest<HTMLElement>(".window-frame") ?? app;
+        const overlay = (name: string) =>
+          frame.querySelector<HTMLElement>(`[data-overlay="${name}"]`);
+        const logs = [...hero.querySelectorAll<HTMLElement>("[data-log]")];
+        const elapsed = hero.querySelector<HTMLElement>("[data-elapsed]");
+        const countEl = app.querySelector<HTMLElement>("[data-count]");
+        const pluralEl = app.querySelector<HTMLElement>("[data-plural]");
+        const typedEl = app.querySelector<HTMLElement>("[data-typed]");
+        const badges = hero.querySelector<HTMLElement>("[data-badges]");
+        const heroUrl = hero.querySelector<HTMLElement>("[data-url]");
+        const heroNote = hero.querySelector<HTMLElement>("[data-note]");
+        const savedEl = app.querySelector<HTMLElement>("[data-saved]");
+
+        const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+        const on = (el: Element | null, yes: boolean) => {
+          if (!el) return;
+          if (yes) el.setAttribute("data-on", "");
+          else el.removeAttribute("data-on");
+        };
+
+        /*
+         * The Matrix rain. Built the first time the drop act comes on screen and
+         * kept for the rest of the session — a WebGL2 context is expensive to
+         * create, browsers cap how many can be live at once, and most visitors
+         * never scroll this far. `null` means WebGL2 said no, which is not a
+         * failure: the overlay's backdrop and copy carry the act on their own,
+         * exactly as they do in the app.
+         */
+        const rainCanvas = frame.querySelector<HTMLCanvasElement>("[data-rain]");
+        let rain: Glow | null = null;
+        let rainTried = false;
+        function setRain(on: boolean) {
+          if (on && !rainTried && rainCanvas) {
+            rainTried = true;
+            rain = mountTriangleGlow(rainCanvas);
+          }
+          rain?.setRaining(on);
+          rain?.setPaused(!on);
+        }
+
+        // Outside the drop act the glow follows the cursor. During it, the
+        // folder has the light — see `driveDrop`.
+        frame.addEventListener("pointermove", (e) => {
+          if (lastAct !== 1) rain?.setGlow({ x: e.clientX, y: e.clientY });
+        });
+        frame.addEventListener("pointerleave", () => rain?.setGlow(null));
+
+        /*
+         * The drop, beat by beat, as a function of how far through the act you
+         * have scrolled. This is the one act that is a *gesture* rather than a
+         * state, so it is the one act the scrollbar performs rather than
+         * merely advances:
+         *
+         *   0.00–0.55  carry — the folder travels in from off the window
+         *   0.55–0.72  hover — it sits over the target, rain at full
+         *   0.72–1.00  land  — released; it shrinks into the window and the
+         *                      copy changes to say where it ended up
+         */
+        const dropOverlay = frame.querySelector<HTMLElement>('[data-overlay="drop"]');
+        const ghost = frame.querySelector<HTMLElement>("[data-ghost]");
+
+        function driveDrop(t: number) {
+          if (!dropOverlay || !ghost) return;
+          const box = dropOverlay.getBoundingClientRect();
+
+          // Ease-out cubic: fast off the mark, settling as it arrives — a linear
+          // carry reads as a conveyor belt.
+          const carry = clamp(t / 0.55, 0, 1);
+          const ease = 1 - Math.pow(1 - carry, 3);
+          const land = clamp((t - 0.72) / 0.28, 0, 1);
+
+          // Starts past the bottom-right corner, outside the frame, as if coming
+          // from the desktop behind the window. Far enough out that the early
+          // part of the path stays clear of the copy at the bottom of the
+          // overlay — the folder crossing its own caption reads as a collision.
+          const dx = (1 - ease) * box.width * 0.62;
+          const dy = (1 - ease) * box.height * 0.82;
+          ghost.style.setProperty("--dx", `${dx}px`);
+          ghost.style.setProperty("--dy", `${dy}px`);
+          ghost.style.setProperty("--rot", `${-11 + ease * 4}deg`);
+          // Released: it drops INTO the folder rather than fading on the spot.
+          ghost.style.setProperty("--scale", `${1 - land * 0.7}`);
+          ghost.style.setProperty("--fade", `${Math.min(ease * 3, 1) * (1 - land)}`);
+
+          dropOverlay.dataset.beat = land > 0.25 ? "landed" : "carry";
+
+          // The light travels with the file, which is what the app does with the
+          // real drag position — so the triangle brightens as the folder nears it.
+          rain?.setGlow({ x: box.left + box.width / 2 + dx, y: box.top + box.height / 2 + dy });
+        }
+
+        /** Acts in which the hero project is mid-deploy, and which log it runs. */
+        const BUILDING: Record<number, "first" | "second"> = { 3: "first", 5: "second" };
+
+        let lastAct = -1;
+        let lastStep = -1;
+
+        function render(act: number, t: number) {
+          const name = ACTS[act]!;
+          const building = BUILDING[act];
+
+          if (act !== lastAct) {
+            app.dataset.act = name;
+            captions.forEach((c, i) => on(c, i === act));
+
+            // The folder's contents. `is-out` hides without collapsing the grid
+            // track, so a project arriving reads as a card appearing rather than
+            // as the whole grid reflowing.
+            let visible = 0;
+            for (const card of cards) {
+              const present = Number(card.dataset.from) <= act;
+              card.classList.toggle("is-out", !present);
+              // `offsetParent` is null for a card the narrow-width rules have
+              // taken out of the grid entirely — count what is on screen, not
+              // what the folder nominally holds.
+              if (present && card.offsetParent !== null) visible++;
+            }
+            if (countEl) countEl.textContent = String(visible);
+            if (pluralEl) pluralEl.textContent = visible === 1 ? "" : "s";
+
+            hero.dataset.state = building ? "build" : "live";
+            logs.forEach((l) => (l.hidden = l.dataset.log !== building));
+
+            // Before its first deploy a project has no URL to show, so the card
+            // says so rather than showing an address that does not resolve yet.
+            const deployed = act > 3;
+            if (heroUrl) heroUrl.hidden = !deployed;
+            if (heroNote) heroNote.hidden = deployed;
+
+            if (badges) {
+              badges.innerHTML =
+                name === "held"
+                  ? '<span class="badge warn">held · offline</span><span class="badge">2 changes waiting</span>'
+                  : "";
+            }
+
+            on(overlay("empty"), act === 0);
+            on(overlay("drop"), act === 1);
+            setRain(act === 1);
+            on(overlay("editor"), act === 5);
+            on(overlay("palette"), act === 7);
+            on(overlay("menubar"), act >= 6);
+            lastAct = act;
+            lastStep = -1;
+          }
+
+          // ── within-act detail ───────────────────────────────────────────────
+
+          if (building) {
+            // The log types itself out at the speed you scroll. Stepping on a
+            // changed line count only, so a frame that lands inside the same
+            // line does no DOM work at all.
+            const lines = logs.find((l) => l.dataset.log === building)!.children;
+            const step = Math.round(clamp(t * 1.25, 0, 1) * lines.length);
+            if (step !== lastStep) {
+              for (let i = 0; i < lines.length; i++) lines[i]!.classList.toggle("on", i < step);
+              lastStep = step;
+            }
+            if (elapsed) elapsed.textContent = `${(t * 4.2).toFixed(1)}s`;
+          }
+
+          if (act === 1) driveDrop(t);
+
+          // The clipboard toast lands after the URL does, not with it.
+          on(overlay("toast"), ACTS[act] === "live" && t > 0.3);
+          if (savedEl) savedEl.textContent = act === 5 && t > 0.15 ? "saved ✓" : "unsaved";
+
+          if (typedEl && act === 7) {
+            typedEl.textContent = "portfolio".slice(0, Math.round(clamp(t * 2, 0, 1) * 9));
+          }
+        }
+
+        let queued = false;
+        function measure() {
+          queued = false;
+          const box = stage!.getBoundingClientRect();
+          const travel = stage!.offsetHeight - window.innerHeight;
+          const p = travel > 0 ? clamp(-box.top / travel, 0, 1) : 0;
+          // Weight units, then a linear scan for the act that contains them.
+          // Nine entries — a binary search here would be ceremony.
+          const at = p * SPAN;
+          let act = ACTS.length - 1;
+          for (let i = 0; i < ACTS.length; i++) {
+            if (at < EDGES[i + 1]!) {
+              act = i;
+              break;
+            }
+          }
+          const width = EDGES[act + 1]! - EDGES[act]!;
+          render(act, clamp((at - EDGES[act]!) / (width || 1), 0, 1));
+
+          document
+            .getElementById("siteHeader")
+            ?.toggleAttribute("data-stuck", window.scrollY > 8);
+        }
+        const schedule = () => {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(measure);
+        };
+
+        addEventListener("scroll", schedule, { passive: true });
+        // A resize can change how many cards the grid shows, and the per-act
+        // block is skipped while the act is unchanged — so force it to re-run.
+        addEventListener("resize", () => {
+          lastAct = -1;
+          schedule();
+        });
+        measure();
+      }
+    </script>
+  </body>
+</html>

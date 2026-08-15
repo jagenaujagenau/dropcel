@@ -1,0 +1,225 @@
+/* Only the weights the page uses. `font-synthesis: none` below means a weight
+   that isn't loaded fails visibly instead of being faked by the browser. */
+@import "@fontsource/geist-sans/latin-400.css";
+@import "@fontsource/geist-sans/latin-500.css";
+@import "@fontsource/geist-sans/latin-600.css";
+@import "@fontsource/geist-mono/latin-400.css";
+
+/*
+ * The app's own design tokens, vendored from src/index.css so the emulation on
+ * this page is drawn with the same values the real window is drawn with. If a
+ * colour here drifts from the app, the page is lying about the product.
+ */
+:root {
+  color-scheme: light dark;
+
+  --vbg-background-100: light-dark(oklch(1 0 0), oklch(0 0 0));
+  --vbg-background-200: light-dark(oklch(0.984 0 0), oklch(0.027 0 0));
+
+  --vbg-gray-alpha-100: light-dark(oklch(0 0 0 / 0.05), oklch(1 0 0 / 0.07));
+  --vbg-gray-alpha-300: light-dark(oklch(0 0 0 / 0.1), oklch(1 0 0 / 0.13));
+  --vbg-gray-alpha-400: light-dark(oklch(0 0 0 / 0.08), oklch(1 0 0 / 0.14));
+  --vbg-gray-alpha-500: light-dark(oklch(0 0 0 / 0.21), oklch(1 0 0 / 0.24));
+  --vbg-gray-alpha-700: light-dark(oklch(0 0 0 / 0.44), oklch(1 0 0 / 0.54));
+
+  --vbg-gray-800: light-dark(oklch(0.59 0 0), oklch(0.59 0 0));
+  --vbg-gray-900: light-dark(oklch(0.42 0 0), oklch(0.706 0 0));
+  --vbg-gray-1000: light-dark(oklch(0.205 0 0), oklch(0.946 0 0));
+
+  --vbg-blue-700: light-dark(oklch(57.61% 0.2508 258.23), oklch(57.61% 0.2321 258.23));
+  --vbg-green-900: light-dark(oklch(51.75% 0.1453 147.65), oklch(73.1% 0.2158 148.29));
+  --vbg-amber-900: light-dark(oklch(52.79% 0.1496 54.65), oklch(77.21% 0.1991 64.28));
+
+  --background: var(--vbg-background-100);
+  --surface: var(--vbg-background-200);
+  --border: var(--vbg-gray-alpha-400);
+  --border-hover: var(--vbg-gray-alpha-500);
+  --border-strong: var(--vbg-gray-alpha-700);
+  --foreground: var(--vbg-gray-1000);
+  --muted: var(--vbg-gray-900);
+  --faint: light-dark(oklch(0.55 0 0), var(--vbg-gray-800));
+  --success: var(--vbg-green-900);
+  --warning: var(--vbg-amber-900);
+  --danger: light-dark(oklch(57% 0.2524 23.03), oklch(62.56% 0.2234 23.03));
+  --focus: light-dark(var(--vbg-blue-700), oklch(71.7% 0.1648 250.794));
+
+  /* Framework accents — the card tints itself with its framework's hue, so a
+     folder is recognisable by colour before the name is read. */
+  --fw-astro: light-dark(oklch(48% 0.165 305), oklch(80% 0.125 305));
+  --fw-nextjs: light-dark(oklch(38% 0.012 265), oklch(84% 0.008 265));
+  --fw-vite: light-dark(oklch(49% 0.175 290), oklch(80% 0.135 290));
+  --fw-svelte: light-dark(oklch(51% 0.185 35), oklch(78% 0.145 35));
+  --fw-static: light-dark(oklch(45% 0.055 220), oklch(81% 0.045 220));
+  --fw-react: light-dark(oklch(48% 0.115 231), oklch(80% 0.105 231));
+
+  /* Chip gradients. White logos are knocked out on top of these, so unlike the
+     accents above they do NOT flip with the theme — a white mark needs a dark
+     plate in both. */
+  --fwc-astro: linear-gradient(140deg, oklch(44% 0.19 300), oklch(58% 0.2 305));
+  --fwc-nextjs: linear-gradient(140deg, oklch(22% 0 0), oklch(38% 0 0));
+  --fwc-vite: linear-gradient(140deg, oklch(48% 0.19 285), oklch(60% 0.17 300));
+  --fwc-svelte: linear-gradient(140deg, oklch(48% 0.19 34), oklch(60% 0.22 34));
+  --fwc-static: linear-gradient(140deg, oklch(42% 0.03 250), oklch(56% 0.04 250));
+  --fwc-react: linear-gradient(140deg, oklch(48% 0.09 216), oklch(60% 0.1 216));
+
+  --radius-sm: 6px;
+  --radius: 8px;
+
+  --shadow-raised: inset 0 1px 0 light-dark(oklch(1 0 0 / 0.65), oklch(1 0 0 / 0.12)),
+    0 1px 1px light-dark(oklch(0 0 0 / 0.07), oklch(0 0 0 / 0.45)),
+    0 2px 4px -2px light-dark(oklch(0 0 0 / 0.14), oklch(0 0 0 / 0.6));
+  --shadow-well: inset 0 1px 2px light-dark(oklch(0 0 0 / 0.14), oklch(0 0 0 / 0.5)),
+    inset 0 -1px 0 light-dark(oklch(1 0 0 / 0.55), oklch(1 0 0 / 0.05));
+
+  --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Geist Mono", Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* The UA's `[hidden] { display: none }` loses to any class that sets a display,
+   which is most of them — so a `hidden` toggled from the stage driver silently
+   did nothing on the card's URL line. */
+[hidden] {
+  display: none !important;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+  /*
+   * The page's own texture: two very wide, very faint washes. Any stronger and
+   * they compete with the window, which is the only thing on this page that is
+   * allowed to be colourful.
+   */
+  background-image:
+    radial-gradient(70rem 40rem at 15% -10%, color-mix(in oklab, var(--fw-astro) 9%, transparent), transparent 70%),
+    radial-gradient(60rem 40rem at 95% 20%, color-mix(in oklab, var(--fw-react) 7%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+a {
+  color: inherit;
+}
+code,
+kbd {
+  font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.wrap {
+  width: min(1140px, 100% - 3rem);
+  margin-inline: auto;
+}
+
+/* ── Type scale ──────────────────────────────────────────────────────────── */
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.lede {
+  font-size: clamp(1rem, 0.95rem + 0.35vw, 1.15rem);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.btn:active {
+  transform: translateY(0.5px);
+}
+.btn-primary {
+  background: var(--foreground);
+  color: var(--background);
+  box-shadow: var(--shadow-raised);
+}
+.btn-primary:hover {
+  background: color-mix(in oklab, var(--foreground) 88%, var(--background));
+}
+.btn-secondary {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+.btn-secondary:hover {
+  border-color: var(--border-hover);
+}
+
+kbd.key {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 0.85em;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

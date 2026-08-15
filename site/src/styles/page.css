@@ -1,0 +1,670 @@
+/* ── site chrome ─────────────────────────────────────────────────────────── */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0;
+  background: color-mix(in oklab, var(--background) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(160%);
+  border-bottom: 1px solid transparent;
+  transition: border-color 200ms ease;
+}
+.site-header[data-stuck] {
+  border-bottom-color: var(--border);
+}
+.site-header .wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.site-mark {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+.site-mark {
+  font-size: 1.1rem;
+}
+.site-mark img {
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+}
+.site-header nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+.site-header nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.site-header nav a:hover {
+  color: var(--foreground);
+}
+/* The download button is a button first. Without this the nav's own link colour
+   wins on specificity and paints light text on a light plate. */
+.site-header nav a.btn-primary,
+.site-header nav a.btn-primary:hover {
+  color: var(--background);
+}
+@media (max-width: 640px) {
+  .site-header nav a.hide-sm {
+    display: none;
+  }
+}
+
+/* ── hero ────────────────────────────────────────────────────────────────── */
+
+.hero {
+  padding: clamp(3rem, 9vh, 6rem) 0 clamp(2rem, 6vh, 4rem);
+  text-align: center;
+}
+.hero h1 {
+  margin-top: 1rem;
+  font-size: clamp(2.4rem, 1.4rem + 4.2vw, 4.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+.hero h1 .dim {
+  color: var(--muted);
+}
+.hero .lede {
+  margin: 1.15rem auto 0;
+  max-width: 46ch;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 1.75rem;
+}
+/*
+ * A text run, not a flex row. It was `inline-flex`, which made the caret its own
+ * flex item — so it inherited the 0.6rem gap and sat centred on the box instead
+ * of on the baseline of the text it's meant to be following.
+ */
+.brew {
+  position: relative; /* anchor for the floating "Copied" chip */
+  display: inline-block;
+  max-width: 100%;
+  /* Roomier than it needs to be: the "Copied" chip lives in this gap. Reserving
+     the space permanently means the chip never lands on the button above it, and
+     nothing on the page moves at the moment of the click. */
+  margin-top: 2.5rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-well);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: clamp(0.7rem, 0.6rem + 0.5vw, 0.8rem);
+  line-height: 1.6;
+  /* The command is one long unbreakable token; on a narrow screen it has to be
+     allowed to wrap somewhere rather than push the page sideways. */
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.brew .prompt {
+  margin-right: 0.5em;
+  color: var(--faint);
+}
+
+/* Only once the script has armed it — see index.astro. Nothing below applies to
+   the unenhanced line, which stays plain selectable text. */
+.brew[data-armed] {
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.brew[data-armed]:hover {
+  border-color: var(--border-hover);
+  background: color-mix(in oklab, var(--foreground) 4%, var(--surface));
+}
+.brew[data-armed]:active {
+  transform: translateY(0.5px);
+}
+/*
+ * Confirmation only — there is no resting "Copy" label; the box carries its
+ * affordance through the pointer and the hover lift.
+ *
+ * Floated clear of the box rather than sitting inside it: as an inline child it
+ * widened the container on copy, so the command itself shifted at the exact
+ * moment the user was looking at it. Absolute means the line never moves.
+ */
+.brew-note {
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  z-index: 2;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--success);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  translate: -50% 4px;
+  transition: opacity 160ms ease-out, translate 160ms ease-out;
+}
+.brew[data-copied] .brew-note {
+  opacity: 1;
+  translate: -50% 0;
+}
+.brew[data-copied] .brew-note::after {
+  content: "Copied";
+}
+
+/*
+ * Wide enough for the chip to sit beside the box instead of over it. The line is
+ * centred in a container far wider than itself, so there is a lot of empty room
+ * to the right and none of it costs any layout. Below this the box is close to
+ * full width, so the chip goes back on top — which is why the extra top margin
+ * above exists, and why it can be given back here.
+ */
+@media (min-width: 900px) {
+  .brew {
+    margin-top: 1.1rem;
+  }
+  .brew-note {
+    top: 50%;
+    bottom: auto;
+    left: calc(100% + 0.6rem);
+    translate: -6px -50%;
+  }
+  .brew[data-copied] .brew-note {
+    translate: 0 -50%;
+  }
+}
+/* The caret is a prompt waiting for input; once it's been used as a button, the
+   blinking is just noise competing with the confirmation. */
+.brew[data-copied] .cursor {
+  animation: none;
+  opacity: 0;
+}
+/* A live prompt, so the install line reads as a terminal waiting for you rather
+   than a screenshot of one. Steps, not a fade — a real cursor is hard on/off.
+   `caret` is the same keyframe the emulated build log blinks on. */
+.brew .cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin-left: 0.25em;
+  vertical-align: -0.16em;
+  background: var(--muted);
+  animation: caret 1.06s step-end infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Not an entrance — an infinite animation whose whole job is to catch the
+     eye, which is exactly what this preference asks us to stop doing. */
+  .brew .cursor {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+.hero-meta {
+  margin-top: 1.6rem;
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
+/* ── the stage ───────────────────────────────────────────────────────────── */
+
+/*
+ * One window, nine acts, one scrollbar. The section is tall; the window inside
+ * it is stuck to the viewport for the whole height, so scrolling this section
+ * advances the story rather than moving the picture.
+ */
+.stage {
+  position: relative;
+}
+.stage-sticky {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  min-height: 100svh;
+  padding-block: 2rem;
+}
+.stage-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+}
+.window-slot {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+/* Captions crossfade in one place — the eye should stay on the window. */
+.captions {
+  position: relative;
+  min-height: 15rem;
+}
+.caption {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.6rem;
+  opacity: 0;
+  translate: 0 8px;
+  pointer-events: none;
+  transition: opacity 280ms ease, translate 280ms ease;
+}
+.caption[data-on] {
+  opacity: 1;
+  translate: 0 0;
+  pointer-events: auto;
+}
+.caption h2 {
+  font-size: clamp(1.35rem, 1.1rem + 0.8vw, 1.9rem);
+  line-height: 1.15;
+}
+.caption p {
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+.caption .aside {
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+
+/* Which act you are on, and how many are left. */
+.acts {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 0.4rem;
+}
+.acts i {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  opacity: 0.35;
+  transition: opacity 200ms ease, background-color 200ms ease;
+}
+.acts i[data-on] {
+  opacity: 1;
+  background: var(--foreground);
+}
+
+@media (max-width: 900px) {
+  .stage-inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+  .captions {
+    min-height: 11rem;
+    order: 2;
+  }
+  .caption {
+    justify-content: flex-start;
+  }
+}
+
+/* ── generic sections ────────────────────────────────────────────────────── */
+
+.section {
+  padding: clamp(4rem, 12vh, 8rem) 0;
+}
+.section-head {
+  max-width: 44ch;
+  margin-bottom: 2.5rem;
+}
+.section-head h2 {
+  font-size: clamp(1.7rem, 1.3rem + 1.6vw, 2.6rem);
+  line-height: 1.1;
+}
+.section-head p {
+  margin-top: 0.8rem;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--border);
+  overflow: hidden;
+}
+.cards article {
+  padding: 1.4rem;
+  background: var(--background);
+}
+.cards h3 {
+  font-size: 0.95rem;
+}
+.cards p {
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.cards .tag {
+  display: inline-block;
+  margin-bottom: 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ── the benefit ─────────────────────────────────────────────────────────── */
+
+/*
+ * The only part of the page that never mentions the product. It's set as prose
+ * rather than in cards or a grid, because it's an argument being made to one
+ * reader — the moment the layout turns it into three tidy boxes it reads as
+ * marketing again, which is the exact thing it's trying not to be.
+ */
+.turn {
+  max-width: 46ch;
+  margin-inline: auto;
+  text-align: center;
+}
+.turn h2 {
+  margin-top: 0.5rem;
+  font-size: clamp(1.9rem, 1.4rem + 2.2vw, 3rem);
+  line-height: 1.05;
+}
+.turn p {
+  margin-top: 1.15rem;
+  color: var(--muted);
+  font-size: clamp(1rem, 0.95rem + 0.3vw, 1.1rem);
+  line-height: 1.65;
+}
+.turn .eyebrow {
+  margin-top: 0;
+}
+/* The payoff line steps back up to full contrast — everything above it is the
+   setup, and the reader should be able to feel the paragraph land. */
+.turn .turn-last {
+  margin-top: 1.6rem;
+  color: var(--foreground);
+  font-size: clamp(1.05rem, 1rem + 0.5vw, 1.3rem);
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+/* ── the three eras ──────────────────────────────────────────────────────── */
+
+/* Sits between the hero and the scene, so it stays a band rather than a screen. */
+.eras-section {
+  padding-block: clamp(2.5rem, 7vh, 4.5rem);
+}
+.eras-section .section-head {
+  margin-bottom: 1.75rem;
+}
+
+.eras {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each era is a panel of the same height, so the step lists start level and the
+   run-out under the short one is unmissable. */
+.eras > li {
+  display: flex;
+  flex-direction: column;
+  padding: 1.4rem 1.4rem 1.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.eras .era {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.eras h3 {
+  margin-top: 0.15rem;
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+}
+
+/* Numbered in mono so the count is legible as a count — the numerals are the
+   measurement, and they're what differs between the three columns. */
+.steps {
+  counter-reset: step;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 0.3rem 0 0.3rem 1.9rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.steps li + li {
+  border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0.35rem;
+  width: 1.15rem;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Pinned to the bottom of the panel: it's the line that has to line up across
+   all three for the comparison to read. */
+.count {
+  margin-top: auto;
+  padding-top: 1.5rem;
+  color: var(--faint);
+  font-size: 0.8rem;
+}
+.count span {
+  color: var(--muted);
+}
+
+/* The answer. Lifted off the row with a lit edge and a wash of the accent, so
+   the eye lands here first and reads back. */
+.eras > li[data-now] {
+  border-color: color-mix(in oklab, var(--fw-astro) 45%, var(--border));
+  background:
+    radial-gradient(24rem 12rem at 50% 0%, color-mix(in oklab, var(--fw-astro) 14%, transparent), transparent 70%),
+    var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+.eras > li[data-now] .era,
+.eras > li[data-now] .steps li {
+  color: var(--foreground);
+}
+.eras > li[data-now] .steps li::before {
+  color: color-mix(in oklab, var(--fw-astro) 70%, var(--foreground));
+}
+.eras > li[data-now] .count {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.eras > li[data-now] .count span {
+  color: var(--foreground);
+}
+
+/* Reveal, armed by JS only — with no script the panels are simply visible. */
+.eras.reveal-armed > li {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 520ms ease-out, transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.eras.reveal-armed > li:nth-child(2) {
+  transition-delay: 110ms;
+}
+.eras.reveal-armed > li:nth-child(3) {
+  transition-delay: 220ms;
+}
+.eras.reveal-armed.is-in > li {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── the small print ─────────────────────────────────────────────────────── */
+
+/* Unboxed columns, deliberately unlike the job cards above them. Two identical
+   card grids back to back read as one long grid, and the reader stops
+   distinguishing them. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 2rem 2.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.facts h3 {
+  font-size: 0.95rem;
+}
+.facts p {
+  margin-top: 0.4rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.note {
+  margin-top: 1.25rem;
+  max-width: 62ch;
+  color: var(--faint);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+/* ── cta ─────────────────────────────────────────────────────────────────── */
+
+.cta {
+  padding: clamp(3.5rem, 10vh, 6rem) 2rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background:
+    radial-gradient(50rem 20rem at 50% 0%, color-mix(in oklab, var(--fw-astro) 12%, transparent), transparent 70%),
+    var(--surface);
+  text-align: center;
+}
+.cta img {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px -12px oklch(0 0 0 / 0.5);
+}
+.cta h2 {
+  margin-top: 1.1rem;
+  font-size: clamp(1.6rem, 1.3rem + 1.4vw, 2.4rem);
+}
+.cta p {
+  margin: 0.7rem auto 0;
+  max-width: 42ch;
+  color: var(--muted);
+}
+
+.site-footer {
+  padding: 2.5rem 0 3.5rem;
+  border-top: 1px solid var(--border);
+  margin-top: clamp(4rem, 10vh, 7rem);
+  color: var(--faint);
+  font-size: 0.82rem;
+}
+.site-footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+.site-footer nav {
+  margin-left: auto;
+  display: flex;
+  gap: 1.1rem;
+}
+.site-footer a {
+  color: var(--faint);
+  text-decoration: none;
+}
+.site-footer a:hover {
+  color: var(--foreground);
+}
+
+/* ── phone ───────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /*
+   * Centred prose is fine for three lines and hostile at six: both edges go
+   * ragged and every line starts in a different place, which is most of what
+   * makes long centred text tiring to read. The heading stays centred by being
+   * short; the argument underneath gets a straight left edge to return to.
+   */
+  .turn {
+    text-align: left;
+  }
+  .turn h2 {
+    text-align: center;
+  }
+  .turn .eyebrow {
+    text-align: center;
+  }
+}
+
+@media (max-width: 520px) {
+  /* Stacked buttons of different widths read as a mistake. Full-width is also
+     simply a bigger tap target, which is the whole argument on a phone. */
+  .hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hero-actions .btn {
+    justify-content: center;
+  }
+  .cta {
+    padding-inline: 1.25rem;
+  }
+}
+
+/* No JS: the scene cannot be driven, so the acts are spelled out instead of
+   leaving a static window and no story. */
+.noscript-steps {
+  margin: 1.5rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.8;
+}
