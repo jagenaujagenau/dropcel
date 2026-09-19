@@ -583,14 +583,14 @@ const acts = [
         }
 
         /** Acts in which the hero project is mid-deploy, and which log it runs. */
-        const BUILDING: Record<number, "first" | "second"> = { 3: "first", 5: "second" };
+        const BUILDING = new Map<number, "first" | "second">([[3, "first"], [5, "second"]]);
 
         let lastAct = -1;
         let lastStep = -1;
 
         function render(act: number, t: number) {
           const name = ACTS[act]!;
-          const building = BUILDING[act];
+          const building = BUILDING.get(act);
 
           if (act !== lastAct) {
             app.dataset.act = name;

@@ -9,7 +9,7 @@
 
 type Project = {
   name: string;
-  fw: string;
+  fw: keyof typeof logo;
   url: string;
   /** The act index at which this project's folder exists. */
   from: number;
@@ -26,14 +26,14 @@ const projects: Project[] = [
   { name: "resume", fw: "static", url: "jagenau-cv.vercel.app", from: 7 },
 ];
 
-const logo: Record<string, string> = {
+const logo = {
   astro: "/icons/astro-dark.svg",
   nextjs: "/icons/next-dark.svg",
   static: "/icons/other.svg",
   vite: "/icons/vite.svg",
   svelte: "/icons/svelte.svg",
   react: "/icons/react.svg",
-};
+} satisfies Record<string, string>;
 ---
 
 {/* The frame exists so the menu-bar strip can sit above the window: `.app`
