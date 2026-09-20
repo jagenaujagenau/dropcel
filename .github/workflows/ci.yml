@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Called by release.yml so a tag cannot publish without passing CI.
+  workflow_call:
 
 jobs:
   test:
@@ -23,5 +25,6 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx oxlint
       - run: npx vitest run
+      - run: npx vite build
       - run: cargo test
         working-directory: src-tauri
