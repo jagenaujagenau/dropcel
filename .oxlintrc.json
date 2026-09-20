@@ -9,6 +9,7 @@
   },
   "ignorePatterns": [
     "src-tauri/**",
+    "site/**",
     "dist/**",
     "tmp/**",
     "tools/oxlint/dropcel/**/*.test.ts",
