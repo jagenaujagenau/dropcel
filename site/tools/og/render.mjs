@@ -36,6 +36,7 @@ let browser;
 try {
   browser = await chromium.launch({ channel: "chrome" });
 } catch {
+  // oxlint-disable-next-line eslint/no-console
   console.error(
     "Could not launch Chrome. Install Google Chrome, or run:\n" +
       "  pnpm dlx playwright install chromium\n" +
@@ -53,4 +54,5 @@ await browser.close();
 await fs.rm(tmp, { force: true });
 
 const { size } = await fs.stat(out);
+// oxlint-disable-next-line eslint/no-console
 console.log(`og.png → 1200×630, ${(size / 1024).toFixed(0)} KB`);

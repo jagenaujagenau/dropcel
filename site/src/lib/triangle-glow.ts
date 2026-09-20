@@ -44,6 +44,7 @@ export function mountTriangleGlow(canvas: HTMLCanvasElement): Glow | null {
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
       // Surfaced rather than swallowed: a silent fallback would hide a shader
       // typo behind a plausible-looking absence.
+      // oxlint-disable-next-line eslint/no-console
       console.error("triangle-glow: shader compile failed", gl.getShaderInfoLog(shader));
       gl.deleteShader(shader);
       return null;
@@ -62,6 +63,7 @@ export function mountTriangleGlow(canvas: HTMLCanvasElement): Glow | null {
   gl.deleteShader(vs);
   gl.deleteShader(fs);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    // oxlint-disable-next-line eslint/no-console
     console.error("triangle-glow: program link failed", gl.getProgramInfoLog(program));
     gl.deleteProgram(program);
     return null;

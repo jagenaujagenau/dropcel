@@ -64,6 +64,7 @@ async function ico(sizes, out) {
 }
 
 await fs.access(src).catch(() => {
+  // oxlint-disable-next-line eslint/no-console
   console.error(`Source icon not found at ${src}`);
   process.exit(1);
 });
@@ -79,5 +80,6 @@ await ico(
 
 for (const [, file] of [...PNGS, [0, "favicon.ico"]]) {
   const { size } = await fs.stat(pub(file));
+  // oxlint-disable-next-line eslint/no-console
   console.log(`${file.padEnd(22)} ${(size / 1024).toFixed(1)} KB`);
 }
