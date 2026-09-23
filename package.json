@@ -48,7 +48,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "happy-dom": "^20.11.1",
     "oxlint": "1.78.0",
-    "typescript": "~5.8.3",
+    "typescript": "~7.0.2",
     "vite": "^7.0.4",
     "vitest": "^4.1.10"
   },
