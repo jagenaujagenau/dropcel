@@ -21,6 +21,6 @@
     "astro": "^5.16.2"
   },
   "devDependencies": {
-    "playwright-core": "^1.56.0"
+    "playwright-core": "^1.63.0"
   }
 }
