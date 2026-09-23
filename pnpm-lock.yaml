@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@effect/atom-react':
-        specifier: 4.0.0-beta.101
-        version: 4.0.0-beta.101(effect@4.0.0-beta.101)(react@19.2.7)(scheduler@0.27.0)
+        specifier: 4.0.0-beta.107
+        version: 4.0.0-beta.107(effect@4.0.0-beta.101)(react@19.2.7)(scheduler@0.27.0)
       '@fontsource/geist-mono':
         specifier: ^5.3.0
         version: 5.3.0
@@ -76,8 +76,8 @@ importers:
         version: 4.3.3
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.0-beta.101
-        version: 4.0.0-beta.101(effect@4.0.0-beta.101)(vitest@4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0)))
+        specifier: 4.0.0-rc.116
+        version: 4.0.0-rc.116(effect@4.0.0-beta.101)(vitest@4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0)))
       '@oxlint/plugins':
         specifier: 1.78.0
         version: 1.78.0
@@ -207,18 +207,18 @@ packages:
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
 
-  '@effect/atom-react@4.0.0-beta.101':
-    resolution: {integrity: sha512-Sjp0K4Yw+xvDtfjuk2n5BCCX2NMEejlRocZEwQ4mdVd82pqI9dtO1QD2fdUzFEZQeBwcEuj8ZCBYbIegj7OLQw==}
+  '@effect/atom-react@4.0.0-beta.107':
+    resolution: {integrity: sha512-dSx8Mmgge8oy3On8k95V3dyaRo9od8Eg0our56PIrTlRZBBRLXM2vc/X7GsxAYtHs2PMracVFUJqizXCcPsCyQ==}
     peerDependencies:
       effect: 4.0.0-beta.101
-      react: ^19.2.4
-      scheduler: '*'
+      react: '>=19.2.7 <20.0.0'
+      scheduler: '>=0.27.0 <0.28.0'
 
-  '@effect/vitest@4.0.0-beta.101':
-    resolution: {integrity: sha512-F5Ur8pZYti0xkZFyb4hPZt8RrKQ1XBoC28ZkKxc7N1iPbhE9fWOvlWA1NC2XlN2wWG08yb5g5jR53LdOxjlhpQ==}
+  '@effect/vitest@4.0.0-rc.116':
+    resolution: {integrity: sha512-q42ue4hAa5AcPBwqi8rvMvR1Jstr+JjsyyxEBUoBk+WWm8otnqFxQ+XbWslW1QSwdg5+2Fdgd7z59IValt9Oiw==}
     peerDependencies:
       effect: 4.0.0-beta.101
-      vitest: ^3.0.0 || ^4.0.0
+      vitest: '>=5.0.0 <6.0.0'
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -1098,8 +1098,8 @@ packages:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
 
-  fast-check@4.9.0:
-    resolution: {integrity: sha512-7ms6T7SybUev/PQITciI0yLM2pOSFy5zpG8Ty7tQofcVaQUvrMXp6CBwqF6fThLCLOrfBtuHAtwq6Yu4XPCllg==}
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
     engines: {node: '>=12.17.0'}
 
   fdir@6.5.0:
@@ -1250,8 +1250,8 @@ packages:
     resolution: {integrity: sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw==}
     hasBin: true
 
-  msgpackr@2.0.4:
-    resolution: {integrity: sha512-o1C5KRmuRt+apqMr1HuGSqWStZoRBUpEsCsl15uM9VdAF1qHLtvMOU2En747EnTyEl6c4pzPewRMFF31s1CNbA==}
+  msgpackr@2.1.0:
+    resolution: {integrity: sha512-p/pBCVO63CsvvpkomUnNNag6+n38rULuDA6HHe70o2gtC8ODI52foF/4ko2qQcp6OiErJXTmrZeXmsGGHsIQNQ==}
 
   multipasta@0.2.8:
     resolution: {integrity: sha512-ZPWuMKyv0cSO29f7hozp+k6+crZbQijV8ipMvxNxRf2SwtYGTX1ZX89Kd20VV4H9Znonx+EQn+iy1wGQsJ+b+Q==}
@@ -1391,8 +1391,8 @@ packages:
     peerDependencies:
       browserslist: '>= 4.21.0'
 
-  uuid@14.0.1:
-    resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
+  uuid@14.0.2:
+    resolution: {integrity: sha512-xZe/16rV4aa+HGSOCiY2YeLT1OybRLrrkL/Rqaq7p7GMVXjFh+6wN4oMYgjFmnSnhY8t6Xpdl2l9qmnHYuMHwQ==}
     hasBin: true
 
   vite@7.3.6:
@@ -1621,13 +1621,13 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@effect/atom-react@4.0.0-beta.101(effect@4.0.0-beta.101)(react@19.2.7)(scheduler@0.27.0)':
+  '@effect/atom-react@4.0.0-beta.107(effect@4.0.0-beta.101)(react@19.2.7)(scheduler@0.27.0)':
     dependencies:
       effect: 4.0.0-beta.101
       react: 19.2.7
       scheduler: 0.27.0
 
-  '@effect/vitest@4.0.0-beta.101(effect@4.0.0-beta.101)(vitest@4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0)))':
+  '@effect/vitest@4.0.0-rc.116(effect@4.0.0-beta.101)(vitest@4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0)))':
     dependencies:
       effect: 4.0.0-beta.101
       vitest: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0))
@@ -2217,14 +2217,14 @@ snapshots:
   effect@4.0.0-beta.101:
     dependencies:
       '@standard-schema/spec': 1.1.0
-      fast-check: 4.9.0
+      fast-check: 4.10.2
       find-my-way-ts: 0.1.6
       ini: 7.0.0
       kubernetes-types: 1.30.0
-      msgpackr: 2.0.4
+      msgpackr: 2.1.0
       multipasta: 0.2.8
       toml: 4.3.0
-      uuid: 14.0.1
+      uuid: 14.0.2
       yaml: 2.9.0
 
   electron-to-chromium@1.5.393: {}
@@ -2275,7 +2275,7 @@ snapshots:
 
   expect-type@1.4.0: {}
 
-  fast-check@4.9.0:
+  fast-check@4.10.2:
     dependencies:
       pure-rand: 8.4.2
 
@@ -2394,7 +2394,7 @@ snapshots:
       '@msgpackr-extract/msgpackr-extract-win32-x64': 3.0.4
     optional: true
 
-  msgpackr@2.0.4:
+  msgpackr@2.1.0:
     optionalDependencies:
       msgpackr-extract: 3.0.4
 
@@ -2536,7 +2536,7 @@ snapshots:
       escalade: 3.2.0
       picocolors: 1.1.1
 
-  uuid@14.0.1: {}
+  uuid@14.0.2: {}
 
   vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0):
     dependencies:
